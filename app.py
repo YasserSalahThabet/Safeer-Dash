@@ -1,6 +1,28 @@
+from pathlib import Path
+import streamlit as st
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+
+ASSETS = Path(__file__).parent / "assets"
+HERO = ASSETS / "hero.jpg"
+TRUCK = ASSETS / "truck.jpg"
+
+st.set_page_config(
+    page_title="Safeer Dash",
+    page_icon="🚚",
+    layout="wide",
+)
+
+# Hero Section
+if HERO.exists():
+    st.image(str(HERO), use_container_width=True)
+
+st.markdown("""
+# 🟢 Safeer Dash  
+### Driver Performance Intelligence
+""")
+
 
 st.set_page_config(page_title="Driver Performance", layout="wide")
 st.title("🚚 Driver Performance Dashboard")
@@ -129,4 +151,5 @@ st.download_button(
     "Download CSV",
     data=report.to_csv(index=False, encoding="utf-8-sig"),
     file_name="drivers_filtered.csv",
+
 )
