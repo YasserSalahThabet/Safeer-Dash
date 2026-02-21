@@ -26,18 +26,18 @@ st.markdown(
 
       div[data-testid="stMetric"] { 
           background: rgba(255,255,255,0.02); 
-          padding: 12px; 
+          padding: 10px; 
           border-radius: 12px; 
       }
 
-      /* Make metric numbers slightly smaller */
+      /* Smaller metric numbers */
       div[data-testid="stMetricValue"] {
-          font-size: 1.6rem !important;
+          font-size: 22px !important;
       }
 
-      /* Make metric labels slightly smaller */
+      /* Smaller metric labels */
       div[data-testid="stMetricLabel"] {
-          font-size: 0.85rem !important;
+          font-size: 12px !important;
           opacity: 0.8;
       }
 
@@ -352,6 +352,7 @@ st.download_button(
     file_name="drivers_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
