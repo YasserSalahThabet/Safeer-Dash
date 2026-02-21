@@ -31,7 +31,7 @@ st.markdown(
       }
 
       div[data-testid="stMetricValue"] {
-          font-size: 19px !important;
+          font-size: 16px !important;
       }
 
       div[data-testid="stMetricLabel"] {
@@ -350,6 +350,7 @@ st.download_button(
     file_name="drivers_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
