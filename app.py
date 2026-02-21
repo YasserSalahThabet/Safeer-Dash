@@ -270,18 +270,23 @@ st.dataframe(style_attention(attention_view), use_container_width=True, hide_ind
 # ----------------------------
 st.divider()
 st.subheader("🔎 Driver Lookup")
+
 driver_list = f["Driver_Name"].dropna().unique().tolist()
 selected = st.selectbox("Select driver", ["(choose)"] + driver_list)
 
 if selected != "(choose)":
     d = f[f["Driver_Name"] == selected].head(1)
+
     if len(d):
         d = d.iloc[0]
-        c1, c2, c3, c4 = st.columns(4)
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+
         c1.metric("Driver ID", str(d["Driver_ID"]))
         c2.metric("Delivery Rate", f"{d['Delivery_Rate']:.2%}")
-        c3.metric("Driver Rejections", f"{int(d['Driver_Rejections']):,}")
-        c4.metric("Score", f"{d['Performance_Score']:.2%}")
+        c3.metric("Orders Completed", f"{int(d['Orders_Completed']):,}")
+        c4.metric("Driver Rejections", f"{int(d['Driver_Rejections']):,}")
+        c5.metric("Score", f"{d['Performance_Score']:.2%}")
 
 # ----------------------------
 # Charts
@@ -328,4 +333,5 @@ st.download_button(
     file_name="drivers_filtered.csv",
     mime="text/csv",
 )
+
 
