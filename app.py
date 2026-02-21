@@ -23,13 +23,32 @@ st.markdown(
     """
     <style>
       .block-container { padding-top: 1rem; }
-      div[data-testid="stMetric"] { background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; }
-      .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
+
+      div[data-testid="stMetric"] { 
+          background: rgba(255,255,255,0.02); 
+          padding: 12px; 
+          border-radius: 12px; 
+      }
+
+      /* Make metric numbers slightly smaller */
+      div[data-testid="stMetricValue"] {
+          font-size: 1.6rem !important;
+      }
+
+      /* Make metric labels slightly smaller */
+      div[data-testid="stMetricLabel"] {
+          font-size: 0.85rem !important;
+          opacity: 0.8;
+      }
+
+      .safeer-subtitle { 
+          margin-top: -10px; 
+          opacity: 0.85; 
+      }
     </style>
     """,
     unsafe_allow_html=True
 )
-
 # ----------------------------
 # Hero/Header
 # ----------------------------
@@ -333,5 +352,6 @@ st.download_button(
     file_name="drivers_filtered.csv",
     mime="text/csv",
 )
+
 
 
