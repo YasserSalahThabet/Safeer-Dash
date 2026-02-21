@@ -280,7 +280,7 @@ if selected != "(choose)":
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Driver ID", str(d["Driver_ID"]))
         c2.metric("Delivery Rate", f"{d['Delivery_Rate']:.2%}")
-        c3.metric("Cancel Rate", f"{d['Cancel_Rate']:.2%}")
+        c3.metric("Driver Rejections", f"{int(d['Driver_Rejections']):,}")
         c4.metric("Score", f"{d['Performance_Score']:.2%}")
 
 # ----------------------------
@@ -328,3 +328,4 @@ st.download_button(
     file_name="drivers_filtered.csv",
     mime="text/csv",
 )
+
