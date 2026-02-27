@@ -49,8 +49,59 @@ if HERO_IMG.exists():
     st.image(str(HERO_IMG), use_container_width=True)
 
 st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown('<div class="safeer-subtitle">رفع ملف واحد (متعدد الملفات) • دمج 2–3 ملفات Excel • إبراز التنبيهات أولاً</div>', unsafe_allow_html=True)
+st.markdown('<div class="safeer-subtitle">صلاحيات متعددة (التشغيل / الموارد البشرية / الإشراف) • رفع متعدد الملفات • إبراز التنبيهات أولاً</div>', unsafe_allow_html=True)
 st.divider()
+
+# =========================
+# Auth / Roles
+# =========================
+ROLES = {
+    "التشغيل": "ops_password",
+    "المارد البشرية": "hr_password",
+    "الإشراف": "sup_password",
+}
+
+def get_secret(key: str, default: str = "") -> str:
+    # reads st.secrets safely
+    try:
+        return st.secrets["auth"][key]
+    except Exception:
+        return default
+
+def require_login():
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+        st.session_state.role = None
+
+    with st.sidebar:
+        st.markdown("## تسجيل الدخول")
+        role = st.selectbox("الدور", list(ROLES.keys()))
+        pwd = st.text_input("كلمة المرور", type="password")
+        c1, c2 = st.columns(2)
+        login = c1.button("دخول")
+        logout = c2.button("خروج")
+
+        if logout:
+            st.session_state.logged_in = False
+            st.session_state.role = None
+            st.rerun()
+
+        if login:
+            secret_key = ROLES[role]
+            expected = get_secret(secret_key, "")
+            if expected and pwd == expected:
+                st.session_state.logged_in = True
+                st.session_state.role = role
+                st.rerun()
+            else:
+                st.error("بيانات الدخول غير صحيحة أو لم يتم إعداد Secrets.")
+
+    if not st.session_state.logged_in:
+        st.info("الرجاء تسجيل الدخول من الشريط الجانبي.")
+        st.stop()
+
+require_login()
+ROLE = st.session_state.role  # one of: التشغيل / المارد البشرية / الإشراف
 
 # =========================
 # Helpers
@@ -77,8 +128,7 @@ def pick(df_cols, candidates):
             return cand
     return None
 
-# 0.20% = 0.002 (assuming rates are 0..1)
-CANCEL_RED_THRESHOLD = 0.002
+CANCEL_RED_THRESHOLD = 0.002  # 0.20%
 
 # =========================
 # Performance mapping (your template)
@@ -87,14 +137,10 @@ PERF_COLS = {
     "driver_id": ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"],
     "first_name": ["اسم السائق", "First Name", "first_name"],
     "last_name": ["اسم السائق.1", "Last Name", "last_name"],
-
-    # Requested
     "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
     "driver_reject": ["المهام المرفوضة (السائق)", "رفض السائق", "Driver Rejections", "driver_rejections"],
     "orders_delivered": ["المهام التي تم تسليمها", "الطلبات المسلمة", "طلبات مكتملة", "طلب مكتمل",
                          "Orders_Delivered", "orders_delivered"],
-
-    # Delivery metric in your report
     "delivery_rate": ["معدل اكتمال الطلبات (غير متعلق بالتوصيل)", "معدل اكتمال الطلبات",
                       "معدل التوصيل", "Delivery_Rate", "delivery_rate"],
 }
@@ -127,14 +173,11 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     })
 
     out["معرف_السائق"] = pd.to_numeric(out["معرف_السائق"], errors="coerce").astype("Int64")
-
     out["معدل_التوصيل"] = out["معدل_التوصيل"].fillna(0).clip(0, 1)
     out["معدل_الإلغاء_مشاكل_التوصيل"] = out["معدل_الإلغاء_مشاكل_التوصيل"].fillna(0).clip(0, 1)
-
     out["المهام_التي_تم_تسليمها"] = out["المهام_التي_تم_تسليمها"].fillna(0)
     out["المهام_المرفوضة_السائق"] = out["المهام_المرفوضة_السائق"].fillna(0)
 
-    # Score 0..1
     score = (
         (out["معدل_التوصيل"] * 0.65)
         + ((1 - out["معدل_الإلغاء_مشاكل_التوصيل"]) * 0.30)
@@ -144,26 +187,17 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 # =========================
-# Auto-detection logic
+# Auto-detection
 # =========================
 def detect_file_type(cols: set[str]) -> str:
-    """
-    Returns one of:
-    - "performance"
-    - "face"
-    - "unknown"
-    """
-    # performance detection (strong signals)
     perf_signals = {
         "معرّف السائق", "معرف السائق", "اسم السائق", "اسم السائق.1",
         "معدل الإلغاء بسبب مشاكل التوصيل",
         "المهام التي تم تسليمها",
         "المهام المرفوضة (السائق)",
     }
-    perf_hits = len(perf_signals.intersection(cols))
-
-    # face detection (we'll detect if it clearly has a face column)
     face_signals = {"Face Recognition", "التعرف على الوجه", "Face_Recognition", "face_recognition"}
+    perf_hits = len(perf_signals.intersection(cols))
     face_hits = len(face_signals.intersection(cols))
 
     if perf_hits >= 4:
@@ -173,11 +207,13 @@ def detect_file_type(cols: set[str]) -> str:
     return "unknown"
 
 # =========================
-# Sidebar: single multi-file uploader + filters
+# Sidebar: single uploader + filters (role-based visibility)
 # =========================
 with st.sidebar:
     if LOGO_IMG.exists():
         st.image(str(LOGO_IMG), use_container_width=True)
+
+    st.markdown(f"### المستخدم: {ROLE}")
 
     st.markdown("### رفع الملفات")
     uploaded_files = st.file_uploader(
@@ -198,7 +234,7 @@ with st.sidebar:
     st.caption("• الإلغاء بسبب مشاكل التوصيل ≥ 0.20% = أحمر")
     st.caption("• درجة الأداء ≠ 100% = أحمر")
 
-if not uploaded_files or len(uploaded_files) == 0:
+if not uploaded_files:
     st.info("ارفع ملفات Excel للبدء (على الأقل ملف الأداء).")
     st.stop()
 
@@ -211,76 +247,45 @@ for uf in uploaded_files:
     df = read_first_sheet_excel_bytes(b)
     cols = set(df.columns)
     kind = detect_file_type(cols)
-    file_items.append({
-        "name": uf.name,
-        "bytes": b,
-        "df": df,
-        "cols": cols,
-        "kind_guess": kind
-    })
+    file_items.append({"name": uf.name, "bytes": b, "df": df, "cols": cols, "kind_guess": kind})
 
-# =========================
-# Choose/confirm which file is performance/face/extra
-# =========================
 perf_candidates = [x for x in file_items if x["kind_guess"] == "performance"]
 face_candidates = [x for x in file_items if x["kind_guess"] == "face"]
-unknown_candidates = [x for x in file_items if x["kind_guess"] == "unknown"]
 
-def file_picker(label, options, default_index=0, key=None):
+def file_picker(label, options, key):
     names = [o["name"] for o in options]
-    if not names:
-        return None
-    chosen = st.sidebar.selectbox(label, names, index=min(default_index, len(names)-1), key=key)
+    chosen = st.sidebar.selectbox(label, names, key=key)
     return next(o for o in options if o["name"] == chosen)
 
-# Performance file (must exist)
-perf_item = None
+# Performance (required)
 if len(perf_candidates) == 1:
     perf_item = perf_candidates[0]
 elif len(perf_candidates) > 1:
     st.sidebar.warning("تم اكتشاف أكثر من ملف أداء. اختر الملف الصحيح:")
-    perf_item = file_picker("اختر ملف الأداء", perf_candidates, key="pick_perf")
+    perf_item = file_picker("اختر ملف الأداء", perf_candidates, "pick_perf")
 else:
-    # Not detected, let user select from all
     st.sidebar.warning("لم يتم اكتشاف ملف الأداء تلقائيًا. اختر ملف الأداء يدويًا:")
-    perf_item = file_picker("اختر ملف الأداء", file_items, key="pick_perf_manual")
+    perf_item = file_picker("اختر ملف الأداء", file_items, "pick_perf_manual")
 
-if perf_item is None:
-    st.error("لا يمكن المتابعة بدون ملف أداء.")
-    st.stop()
-
-# Face file (optional)
+# Face (optional)
 face_item = None
+remaining = [x for x in file_items if x["name"] != perf_item["name"]]
 if len(face_candidates) == 1:
     face_item = face_candidates[0]
 elif len(face_candidates) > 1:
     st.sidebar.warning("تم اكتشاف أكثر من ملف Face Recognition. اختر الملف الصحيح:")
-    face_item = file_picker("اختر ملف Face Recognition", face_candidates, key="pick_face")
+    face_item = file_picker("اختر ملف Face Recognition", face_candidates, "pick_face")
 else:
-    # Offer selection from remaining files (excluding perf)
-    remaining = [x for x in file_items if x["name"] != perf_item["name"]]
     if remaining:
-        face_item = st.sidebar.selectbox(
-            "ملف Face Recognition (اختياري) — اختر إذا موجود",
-            ["(بدون)"] + [x["name"] for x in remaining],
-            index=0
-        )
-        if face_item != "(بدون)":
-            face_item = next(x for x in remaining if x["name"] == face_item)
-        else:
-            face_item = None
+        face_choice = st.sidebar.selectbox("ملف Face Recognition (اختياري)", ["(بدون)"] + [x["name"] for x in remaining], key="face_optional")
+        if face_choice != "(بدون)":
+            face_item = next(x for x in remaining if x["name"] == face_choice)
 
-# Extra file (optional) — pick from remaining not used
+# Extra (optional)
 extra_item = None
-remaining2 = [x for x in file_items if x["name"] not in {perf_item["name"], (face_item["name"] if face_item else None)}]
-remaining2 = [x for x in remaining2 if x["name"] is not None]
-
+remaining2 = [x for x in remaining if (face_item is None or x["name"] != face_item["name"])]
 if remaining2:
-    extra_choice = st.sidebar.selectbox(
-        "ملف إضافي (اختياري) — اختر إذا موجود",
-        ["(بدون)"] + [x["name"] for x in remaining2],
-        index=0
-    )
+    extra_choice = st.sidebar.selectbox("ملف إضافي (اختياري)", ["(بدون)"] + [x["name"] for x in remaining2], key="extra_optional")
     if extra_choice != "(بدون)":
         extra_item = next(x for x in remaining2 if x["name"] == extra_choice)
 
@@ -289,9 +294,7 @@ if remaining2:
 # =========================
 perf = build_performance_report(perf_item["df"])
 
-# =========================
-# Build Face Recognition merge (optional)
-# =========================
+# Face merge (optional)
 face_df = None
 if face_item:
     face_raw = face_item["df"]
@@ -304,9 +307,7 @@ if face_item:
     face_df["معرف_السائق"] = pd.to_numeric(face_df["معرف_السائق"], errors="coerce").astype("Int64")
     face_df["Face_Recognition"] = safe_to_numeric(face_df["Face_Recognition"]).fillna(0)
 
-# =========================
-# Build Extra merge (optional)
-# =========================
+# Extra merge (optional)
 extra_df = None
 if extra_item:
     extra_raw = extra_item["df"]
@@ -319,9 +320,7 @@ if extra_item:
     extra_df["معرف_السائق"] = pd.to_numeric(extra_df["معرف_السائق"], errors="coerce").astype("Int64")
     extra_df["مؤشر_إضافي"] = safe_to_numeric(extra_df["مؤشر_إضافي"]).fillna(0)
 
-# =========================
-# MASTER merge
-# =========================
+# MASTER
 master = perf.copy()
 if face_df is not None:
     master = master.merge(face_df, on="معرف_السائق", how="left")
@@ -334,7 +333,7 @@ if "مؤشر_إضافي" in master.columns:
     master["مؤشر_إضافي"] = master["مؤشر_إضافي"].fillna(0)
 
 # =========================
-# Alert priority (fix precedence)
+# Alert priority (precedence)
 # =========================
 master["تنبيه_رفض"] = (master["المهام_المرفوضة_السائق"] > 0).astype(int)
 master["تنبيه_إلغاء"] = (master["معدل_الإلغاء_مشاكل_التوصيل"] >= CANCEL_RED_THRESHOLD).astype(int)
@@ -353,9 +352,7 @@ master = master.sort_values(
 
 master["ترتيب_المتابعة"] = range(1, len(master) + 1)
 
-# =========================
 # Filters
-# =========================
 f = master.copy()
 if search.strip():
     s = search.strip().lower()
@@ -363,150 +360,144 @@ if search.strip():
         f["اسم_السائق"].str.lower().str.contains(s, na=False)
         | f["معرف_السائق"].astype(str).str.contains(s, na=False)
     ]
-
 f = f[(f["معدل_التوصيل"] >= min_delivery) & (f["معدل_الإلغاء_مشاكل_التوصيل"] <= max_cancel)]
 
-# =========================
 # Styling
-# =========================
 def style_table(df):
     sty = df.style.format({
         "درجة_الأداء": "{:.2%}",
         "معدل_التوصيل": "{:.2%}",
         "معدل_الإلغاء_مشاكل_التوصيل": "{:.2%}",
     })
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:700;" if float(x) > 0 else "",
-        subset=["المهام_المرفوضة_السائق"]
-    )
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:700;" if float(x) >= CANCEL_RED_THRESHOLD else "",
-        subset=["معدل_الإلغاء_مشاكل_التوصيل"]
-    )
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:700;" if round(float(x), 6) != 1.0 else "",
-        subset=["درجة_الأداء"]
-    )
+    sty = sty.applymap(lambda x: "color:red;font-weight:700;" if float(x) > 0 else "", subset=["المهام_المرفوضة_السائق"])
+    sty = sty.applymap(lambda x: "color:red;font-weight:700;" if float(x) >= CANCEL_RED_THRESHOLD else "", subset=["معدل_الإلغاء_مشاكل_التوصيل"])
+    sty = sty.applymap(lambda x: "color:red;font-weight:700;" if round(float(x), 6) != 1.0 else "", subset=["درجة_الأداء"])
     return sty
 
 # =========================
-# KPIs
+# Role-based pages
 # =========================
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("عدد السائقين (بعد الفلترة)", f"{len(f):,}")
-k2.metric("متوسط معدل التوصيل", f"{f['معدل_التوصيل'].mean():.2%}" if len(f) else "—")
-k3.metric("متوسط معدل الإلغاء (مشاكل التوصيل)", f"{f['معدل_الإلغاء_مشاكل_التوصيل'].mean():.2%}" if len(f) else "—")
-k4.metric("متوسط درجة الأداء", f"{f['درجة_الأداء'].mean():.2%}" if len(f) else "—")
+# Simple navigation: each role sees a different default page set
+if ROLE == "التشغيل":
+    pages = ["الرئيسية", "المتابعة", "بحث سائق", "الجدول النهائي", "الرسوم"]
+elif ROLE == "الإشراف":
+    pages = ["المتابعة", "بحث سائق", "الرسوم"]
+else:  # "المارد البشرية"
+    pages = ["بحث سائق", "الجدول النهائي"]
 
-st.divider()
-
-# =========================
-# Needs Attention
-# =========================
-st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
-top_cols = [
-    "ترتيب_المتابعة",
-    "معرف_السائق",
-    "اسم_السائق",
-    "أولوية_التنبيه",
-    "درجة_الأداء",
-    "معدل_التوصيل",
-    "معدل_الإلغاء_مشاكل_التوصيل",
-    "المهام_التي_تم_تسليمها",
-    "المهام_المرفوضة_السائق",
-]
-if "Face_Recognition" in f.columns:
-    top_cols.append("Face_Recognition")
-if "مؤشر_إضافي" in f.columns:
-    top_cols.append("مؤشر_إضافي")
-
-st.dataframe(style_table(f[top_cols].head(40)), use_container_width=True, hide_index=True)
+page = st.sidebar.radio("الصفحات", pages)
 
 # =========================
-# Driver Lookup
+# Shared KPIs (for roles that need it)
 # =========================
-st.divider()
-st.subheader("🔎 بحث سريع عن سائق (Driver Lookup)")
+def show_kpis():
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("عدد السائقين (بعد الفلترة)", f"{len(f):,}")
+    k2.metric("متوسط معدل التوصيل", f"{f['معدل_التوصيل'].mean():.2%}" if len(f) else "—")
+    k3.metric("متوسط معدل الإلغاء (مشاكل التوصيل)", f"{f['معدل_الإلغاء_مشاكل_التوصيل'].mean():.2%}" if len(f) else "—")
+    k4.metric("متوسط درجة الأداء", f"{f['درجة_الأداء'].mean():.2%}" if len(f) else "—")
 
-driver_list = f["اسم_السائق"].dropna().unique().tolist()
-selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list)
+# =========================
+# Pages
+# =========================
+if page == "الرئيسية":
+    show_kpis()
+    st.divider()
+    st.subheader("ملخص")
+    st.write("هذه الصفحة متاحة للتشغيل فقط ويمكن تطويرها لاحقاً لعرض ملخصات يومية/أسبوعية.")
 
-if selected != "(اختر)":
-    d = f[f["اسم_السائق"] == selected].head(1).iloc[0]
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("معدل التوصيل", f"{d['معدل_التوصيل']:.2%}")
-    c2.metric("المهام التي تم تسليمها", f"{int(d['المهام_التي_تم_تسليمها']):,}")
-    c3.metric("معدل الإلغاء بسبب مشاكل التوصيل", f"{d['معدل_الإلغاء_مشاكل_التوصيل']:.2%}")
-    c4.metric("المهام المرفوضة (السائق)", f"{int(d['المهام_المرفوضة_السائق']):,}")
-
+elif page == "المتابعة":
+    show_kpis()
+    st.divider()
+    st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
+    cols = [
+        "ترتيب_المتابعة", "معرف_السائق", "اسم_السائق",
+        "أولوية_التنبيه", "درجة_الأداء",
+        "معدل_التوصيل", "معدل_الإلغاء_مشاكل_التوصيل",
+        "المهام_التي_تم_تسليمها", "المهام_المرفوضة_السائق"
+    ]
     if "Face_Recognition" in f.columns:
-        c5.metric("Face Recognition", f"{int(d['Face_Recognition']):,}")
-    else:
-        c5.metric("Face Recognition", "—")
+        cols.append("Face_Recognition")
+    if "مؤشر_إضافي" in f.columns:
+        cols.append("مؤشر_إضافي")
+    st.dataframe(style_table(f[cols].head(50)), use_container_width=True, hide_index=True)
 
-    with st.expander("عرض جميع بيانات السائق"):
-        st.dataframe(pd.DataFrame(d).T, use_container_width=True)
+elif page == "بحث سائق":
+    st.subheader("🔎 بحث سريع عن سائق (Driver Lookup)")
+    driver_list = f["اسم_السائق"].dropna().unique().tolist()
+    selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list)
 
-# =========================
-# Master Table
-# =========================
-st.divider()
-st.subheader("📋 الجدول النهائي (كل البيانات بعد الدمج)")
+    if selected != "(اختر)":
+        d = f[f["اسم_السائق"] == selected].head(1).iloc[0]
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("معدل التوصيل", f"{d['معدل_التوصيل']:.2%}")
+        c2.metric("المهام التي تم تسليمها", f"{int(d['المهام_التي_تم_تسليمها']):,}")
+        c3.metric("معدل الإلغاء بسبب مشاكل التوصيل", f"{d['معدل_الإلغاء_مشاكل_التوصيل']:.2%}")
+        c4.metric("المهام المرفوضة (السائق)", f"{int(d['المهام_المرفوضة_السائق']):,}")
+        if "Face_Recognition" in f.columns:
+            c5.metric("Face Recognition", f"{int(d['Face_Recognition']):,}")
+        else:
+            c5.metric("Face Recognition", "—")
 
-display_cols = [
-    "معرف_السائق", "اسم_السائق",
-    "درجة_الأداء", "معدل_التوصيل", "معدل_الإلغاء_مشاكل_التوصيل",
-    "المهام_التي_تم_تسليمها", "المهام_المرفوضة_السائق",
-]
-if "Face_Recognition" in f.columns:
-    display_cols.append("Face_Recognition")
-if "مؤشر_إضافي" in f.columns:
-    display_cols.append("مؤشر_إضافي")
+        with st.expander("عرض جميع بيانات السائق"):
+            st.dataframe(pd.DataFrame(d).T, use_container_width=True)
 
-st.dataframe(style_table(f[display_cols]), use_container_width=True, hide_index=True)
+elif page == "الجدول النهائي":
+    st.subheader("📋 الجدول النهائي (كل البيانات بعد الدمج)")
+    cols = [
+        "معرف_السائق", "اسم_السائق",
+        "درجة_الأداء", "معدل_التوصيل", "معدل_الإلغاء_مشاكل_التوصيل",
+        "المهام_التي_تم_تسليمها", "المهام_المرفوضة_السائق"
+    ]
+    if "Face_Recognition" in f.columns:
+        cols.append("Face_Recognition")
+    if "مؤشر_إضافي" in f.columns:
+        cols.append("مؤشر_إضافي")
 
-st.download_button(
-    "⬇️ تحميل النتائج CSV",
-    data=f.to_csv(index=False, encoding="utf-8-sig"),
-    file_name="safeer_master_filtered.csv",
-    mime="text/csv",
-)
+    st.dataframe(style_table(f[cols]), use_container_width=True, hide_index=True)
 
-# =========================
-# Charts
-# =========================
-st.divider()
-left, right = st.columns(2)
+    # Exports: allow ops + HR, hide for supervision if you want
+    if ROLE in ["التشغيل", "المارد البشرية"]:
+        st.download_button(
+            "⬇️ تحميل النتائج CSV",
+            data=f.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="safeer_master_filtered.csv",
+            mime="text/csv",
+        )
 
-with left:
-    st.subheader("أقل 20 سائق حسب درجة الأداء")
-    worst = f.sort_values("درجة_الأداء", ascending=True).head(20)
-    fig1 = px.bar(
-        worst,
-        x="درجة_الأداء",
-        y="اسم_السائق",
-        orientation="h",
-        hover_data=[
-            "معرف_السائق",
-            "معدل_التوصيل",
-            "معدل_الإلغاء_مشاكل_التوصيل",
-            "المهام_التي_تم_تسليمها",
-            "المهام_المرفوضة_السائق",
-        ],
-    )
-    fig1.update_xaxes(tickformat=".0%")
-    st.plotly_chart(fig1, use_container_width=True)
+elif page == "الرسوم":
+    show_kpis()
+    st.divider()
+    left, right = st.columns(2)
 
-with right:
-    st.subheader("معدل الإلغاء مقابل معدل التوصيل")
-    fig2 = px.scatter(
-        f,
-        x="معدل_الإلغاء_مشاكل_التوصيل",
-        y="معدل_التوصيل",
-        size="المهام_التي_تم_تسليمها",
-        hover_data=["اسم_السائق", "معرف_السائق", "درجة_الأداء", "المهام_المرفوضة_السائق"],
-    )
-    fig2.update_xaxes(tickformat=".0%")
-    fig2.update_yaxes(tickformat=".0%")
-    st.plotly_chart(fig2, use_container_width=True)
+    with left:
+        st.subheader("أقل 20 سائق حسب درجة الأداء")
+        worst = f.sort_values("درجة_الأداء", ascending=True).head(20)
+        fig1 = px.bar(
+            worst,
+            x="درجة_الأداء",
+            y="اسم_السائق",
+            orientation="h",
+            hover_data=[
+                "معرف_السائق",
+                "معدل_التوصيل",
+                "معدل_الإلغاء_مشاكل_التوصيل",
+                "المهام_التي_تم_تسليمها",
+                "المهام_المرفوضة_السائق",
+            ],
+        )
+        fig1.update_xaxes(tickformat=".0%")
+        st.plotly_chart(fig1, use_container_width=True)
+
+    with right:
+        st.subheader("معدل الإلغاء مقابل معدل التوصيل")
+        fig2 = px.scatter(
+            f,
+            x="معدل_الإلغاء_مشاكل_التوصيل",
+            y="معدل_التوصيل",
+            size="المهام_التي_تم_تسليمها",
+            hover_data=["اسم_السائق", "معرف_السائق", "درجة_الأداء", "المهام_المرفوضة_السائق"],
+        )
+        fig2.update_xaxes(tickformat=".0%")
+        fig2.update_yaxes(tickformat=".0%")
+        st.plotly_chart(fig2, use_container_width=True)
