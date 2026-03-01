@@ -53,7 +53,20 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
+st.markdown(
+    """
+    <style>
+      /* Hide "Drag and drop files here" + file size help text in the uploader */
+      [data-testid="stFileUploaderDropzone"] div div div span {
+          display: none !important;
+      }
+      [data-testid="stFileUploaderDropzone"] small {
+          display: none !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 # =========================
 # Header images (swapped)
 # =========================
@@ -659,3 +672,4 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
