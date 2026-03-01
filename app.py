@@ -67,7 +67,6 @@ with cimg2:
         st.image(str(LEFT_IMG), use_container_width=True)
 
 st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown('<div class="safeer-subtitle">التشغيل / الموارد البشرية / الإشراف • رفع متعدد الملفات • إبراز التنبيهات أولاً</div>', unsafe_allow_html=True)
 st.divider()
 
 # =========================
@@ -863,3 +862,4 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
