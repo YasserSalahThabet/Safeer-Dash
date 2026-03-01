@@ -29,7 +29,7 @@ FAVICON_IMG = ASSETS / "favicon.png"
 # Page config
 # =========================
 st.set_page_config(
-    page_title="لوحة سفير - Safeer Dash",
+    page_title="Safeer Dash",
     page_icon=str(FAVICON_IMG) if FAVICON_IMG.exists() else "🟢",
     layout="wide",
 )
@@ -862,4 +862,5 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
