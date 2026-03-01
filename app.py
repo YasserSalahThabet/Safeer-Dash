@@ -39,44 +39,44 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1rem; }
-      div[data-testid="stMetric"] {
-          background: rgba(255,255,255,0.02);
-          padding: 8px;
-          border-radius: 12px;
-      }
-      div[data-testid="stMetricValue"] { font-size: 19px !important; }
-      div[data-testid="stMetricLabel"] { font-size: 11px !important; opacity: 0.8; }
-      .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
-      .small-note { font-size: 12px; opacity: 0.8; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-st.markdown(
-    """
-    <style>
-    /* Hide instruction text but keep button */
-    [data-testid="stFileUploaderDropzone"] [data-testid="stMarkdownContainer"] {
-        display: none !important;
-    }
-    [data-testid="stFileUploaderDropzone"] small {
+    /* --- Streamlit 1.54 uploader clean style --- */
+
+    /* Hide drag & drop instructions */
+    div[data-testid="stFileUploader"] section div p {
         display: none !important;
     }
 
-    /* Keep the upload area visible enough for the button */
-    [data-testid="stFileUploaderDropzone"] {
-        border: 0 !important;
+    /* Hide small helper text */
+    div[data-testid="stFileUploader"] section small {
+        display: none !important;
+    }
+
+    /* Remove dashed drop area */
+    div[data-testid="stFileUploader"] section {
+        border: 0px !important;
         background: transparent !important;
-        padding: 0 !important;
+        padding: 0px !important;
     }
 
-    /* Make the button full-width and clean */
-    [data-testid="stFileUploaderDropzone"] button {
+    /* Style button */
+    div[data-testid="stFileUploader"] button {
         width: 100% !important;
         border-radius: 12px !important;
-        padding: 0.6rem 0.9rem !important;
+        padding: 0.7rem !important;
         font-weight: 700 !important;
+        font-size: 16px !important;
+        color: transparent !important;   /* Hide original text */
+        position: relative;
+    }
+
+    /* Replace button text */
+    div[data-testid="stFileUploader"] button::after {
+        content: "تحميل الملفات";
+        color: white;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
     }
     </style>
     """,
@@ -691,6 +691,7 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
