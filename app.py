@@ -1,4 +1,3 @@
-import os
 import sqlite3
 import pandas as pd
 import streamlit as st
@@ -29,7 +28,7 @@ FAVICON_IMG = ASSETS / "favicon.png"
 # Page config
 # =========================
 st.set_page_config(
-    page_title="Safeer Dash",
+    page_title="لوحة سفير - Safeer Dash",
     page_icon=str(FAVICON_IMG) if FAVICON_IMG.exists() else "🟢",
     layout="wide",
 )
@@ -66,7 +65,8 @@ with cimg2:
     if LEFT_IMG.exists():
         st.image(str(LEFT_IMG), use_container_width=True)
 
-st.markdown("# Safeer Dash")
+st.markdown("# لوحة سفير - Safeer Dash")
+st.markdown('<div class="safeer-subtitle">التشغيل / الموارد البشرية / الإشراف</div>', unsafe_allow_html=True)
 st.divider()
 
 # =========================
@@ -232,36 +232,6 @@ def upsert_driver(driver_id: int, driver_name: str = None, user_id: str = None,
     con.commit()
     con.close()
 
-def add_warning(driver_id: int, warning_date: str, warning_type: str, details: str):
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute("""
-        INSERT INTO warnings (driver_id, warning_date, warning_type, details, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (int(driver_id), warning_date, warning_type, details, now_ts()))
-    con.commit()
-    con.close()
-
-def add_expense(driver_id: int, expense_date: str, amount: float, expense_type: str, details: str):
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute("""
-        INSERT INTO expenses (driver_id, expense_date, amount, expense_type, details, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (int(driver_id), expense_date, float(amount), expense_type, details, now_ts()))
-    con.commit()
-    con.close()
-
-def add_document(driver_id: int, file_name: str, save_path: str, doc_type: str, notes: str):
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute("""
-        INSERT INTO documents (driver_id, uploaded_at, filename, path, doc_type, notes)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (int(driver_id), now_ts(), file_name, save_path, doc_type, notes))
-    con.commit()
-    con.close()
-
 def get_hr_registry() -> pd.DataFrame:
     con = db_conn()
     df = pd.read_sql_query("""
@@ -314,36 +284,38 @@ def pick(df_cols, candidates):
     return None
 
 # =========================
-# PRIORITY RULES (your latest request)
+# RULES / TARGETS
 # =========================
 CANCEL_RED_THRESHOLD = 0.002        # 0.20%
 ORDERS_TARGET_MONTH = 450
 
 # =========================
-# Performance mapping
+# Column mapping (Performance)
 # =========================
 PERF_COLS = {
     "driver_id": ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"],
     "first_name": ["اسم السائق", "First Name", "first_name"],
     "last_name": ["اسم السائق.1", "Last Name", "last_name"],
 
-    "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل الغاء", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
-    "driver_reject": ["المهام المرفوضة (السائق)", "المهام المرفوضة", "رفض السائق", "Driver Rejections", "driver_rejections"],
-    "orders_delivered": ["المهام التي تم تسليمها", "طلبات", "الطلبات", "الطلبات المسلمة", "طلبات مكتملة", "Orders_Delivered", "orders_delivered"],
     "delivery_rate": ["معدل اكتمال الطلبات (غير متعلق بالتوصيل)", "معدل التوصيل", "معدل توصيل", "Delivery_Rate", "delivery_rate"],
+    "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل الغاء", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
+    "orders_delivered": ["المهام التي تم تسليمها", "طلبات", "الطلبات", "الطلبات المسلمة", "طلبات مكتملة", "Orders_Delivered", "orders_delivered"],
+    "reject_total": ["المهام المرفوضة", "المهام المرفوضة (السائق)", "رفض السائق", "Driver Rejections", "driver_rejections"],
 
-    # NEW: Work days for Driver Lookup (if exists)
     "work_days": ["اعدد ايام العمل", "عدد ايام العمل", "أيام العمل", "Work Days", "work_days", "days_worked"],
 
-    # Optional: FR / VDA could exist in extra files too
     "fr": ["FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "face_recognition"],
     "vda": ["VDA", "vda", "مؤشر VDA", "مؤشر_إضافي"],
+
+    "auto_reject": ["المهام المرفوضة تلقائيًا (تلقائياً)", "المهام المرفوضة تلقائيا", "Auto Reject", "auto_reject"],
+    "ontime_d": ["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)", "نسبة التسليم في الوقت", "On-time (D)", "ontime_d"],
+    "avg_delivery_time": ["متوسط مدة التوصيل لكل طلب مكتمل", "متوسط مدة التوصيل", "Avg Delivery Time", "avg_delivery_time"],
 }
 
 def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
 
-    required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "driver_reject"]
+    required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
     missing = [k for k in required if not mapped.get(k)]
     if missing:
         st.error("❌ الأعمدة المطلوبة غير موجودة في ملف الأداء: " + ", ".join(missing))
@@ -358,30 +330,26 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     ).str.replace(r"\s+", " ", regex=True).str.strip()
 
     out = pd.DataFrame({
-        "معرف_السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
-        "اسم_السائق": driver_name,
+        "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
+        "اسم السائق": driver_name,
 
-        "معدل_توصيل": safe_to_numeric(df_raw[mapped["delivery_rate"]]),
-        "معدل_الغاء": safe_to_numeric(df_raw[mapped["cancel_rate"]]),
+        "معدل توصيل": safe_to_numeric(df_raw[mapped["delivery_rate"]]),
+        "معدل الغاء": safe_to_numeric(df_raw[mapped["cancel_rate"]]),
         "طلبات": safe_to_numeric(df_raw[mapped["orders_delivered"]]),
-        "المهام_المرفوضة": safe_to_numeric(df_raw[mapped["driver_reject"]]),
+        "المهام المرفوضة": safe_to_numeric(df_raw[mapped["reject_total"]]),
     })
 
-    out["معرف_السائق"] = pd.to_numeric(out["معرف_السائق"], errors="coerce").astype("Int64")
-
-    out["معدل_توصيل"] = out["معدل_توصيل"].fillna(0).clip(0, 1)
-    out["معدل_الغاء"] = out["معدل_الغاء"].fillna(0).clip(0, 1)
-
+    out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
+    out["معدل توصيل"] = out["معدل توصيل"].fillna(0).clip(0, 1)
+    out["معدل الغاء"] = out["معدل الغاء"].fillna(0).clip(0, 1)
     out["طلبات"] = out["طلبات"].fillna(0)
-    out["المهام_المرفوضة"] = out["المهام_المرفوضة"].fillna(0)
+    out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
 
-    # optional: work days
     if mapped.get("work_days"):
-        out["اعدد_ايام_العمل"] = safe_to_numeric(df_raw[mapped["work_days"]]).fillna(0)
+        out["اعدد ايام العمل"] = safe_to_numeric(df_raw[mapped["work_days"]]).fillna(0)
     else:
-        out["اعدد_ايام_العمل"] = pd.NA
+        out["اعدد ايام العمل"] = pd.NA
 
-    # optional: FR / VDA inside same file
     if mapped.get("fr"):
         out["FR"] = safe_to_numeric(df_raw[mapped["fr"]]).fillna(0)
     else:
@@ -391,6 +359,41 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
         out["VDA"] = safe_to_numeric(df_raw[mapped["vda"]]).fillna(0)
     else:
         out["VDA"] = pd.NA
+
+    # Keep expander raw fields stable
+    out["اسم السائق (مكرر)"] = out["اسم السائق"]
+
+    # Requested fields (populate from raw if exists, else map/NA)
+    if "المهام التي تم تسليمها" in df_raw.columns:
+        out["المهام التي تم تسليمها"] = df_raw["المهام التي تم تسليمها"]
+    else:
+        out["المهام التي تم تسليمها"] = df_raw[mapped["orders_delivered"]]
+
+    if "المهام المرفوضة" in df_raw.columns:
+        out["المهام المرفوضة"] = df_raw["المهام المرفوضة"]
+    # already exists as metric
+
+    if "المهام المرفوضة (السائق)" in df_raw.columns:
+        out["المهام المرفوضة (السائق)"] = df_raw["المهام المرفوضة (السائق)"]
+    else:
+        out["المهام المرفوضة (السائق)"] = df_raw[mapped["reject_total"]]
+
+    if mapped.get("auto_reject"):
+        out["المهام المرفوضة تلقائيًا (تلقائياً)"] = df_raw[mapped["auto_reject"]]
+    else:
+        out["المهام المرفوضة تلقائيًا (تلقائياً)"] = pd.NA
+
+    out["معدل الإلغاء بسبب مشاكل التوصيل"] = df_raw[mapped["cancel_rate"]]
+
+    if mapped.get("ontime_d"):
+        out["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"] = df_raw[mapped["ontime_d"]]
+    else:
+        out["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"] = pd.NA
+
+    if mapped.get("avg_delivery_time"):
+        out["متوسط مدة التوصيل لكل طلب مكتمل"] = df_raw[mapped["avg_delivery_time"]]
+    else:
+        out["متوسط مدة التوصيل لكل طلب مكتمل"] = pd.NA
 
     return out
 
@@ -416,232 +419,49 @@ def detect_file_type(cols: set[str]) -> str:
     return "unknown"
 
 # =========================
-# Styling (your thresholds)
+# Styling (Attention table)
 # =========================
 def style_attention_table(df):
-    sty = df.style.format({
-        "معدل_توصيل": "{:.2%}",
-        "معدل_الغاء": "{:.2%}",
-    })
-
-    # Cancel in red if <= 0.20% (per your message)
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:800;" if float(x) <= CANCEL_RED_THRESHOLD else "",
-        subset=["معدل_الغاء"]
-    )
-
-    # Delivery in red if < 100%
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:800;" if float(x) < 1.0 else "",
-        subset=["معدل_توصيل"]
-    )
-
-    # Orders in red if < 450
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:800;" if float(x) < ORDERS_TARGET_MONTH else "",
-        subset=["طلبات"]
-    )
-
-    # Rejections in red if > 0
-    sty = sty.applymap(
-        lambda x: "color:red;font-weight:800;" if float(x) > 0 else "",
-        subset=["المهام_المرفوضة"]
-    )
-
+    sty = df.style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}"})
+    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) <= CANCEL_RED_THRESHOLD else "", subset=["معدل الغاء"])
+    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) < 1.0 else "", subset=["معدل توصيل"])
+    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) < ORDERS_TARGET_MONTH else "", subset=["طلبات"])
+    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) > 0 else "", subset=["المهام المرفوضة"])
     return sty
 
 # =========================
-# Sidebar uploader + filters
+# Sidebar uploader + filters (MINIMAL)
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
 
-    st.markdown("### رفع ملفات التشغيل/الأداء")
+    st.markdown("### 📁")
     uploaded_files = st.file_uploader(
-        "ارفع 2–3 ملفات Excel معًا (للتشغيل/الأداء)",
+        "رفع ملفات",
         type=["xlsx"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        label_visibility="collapsed"
     )
 
     st.divider()
-    st.markdown("### فلاتر التشغيل/الأداء")
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
-    max_cancel = st.slider("أعلى/أقل معدل إلغاء", 0.0, 1.0, 1.0, 0.01)  # kept for now
+    max_cancel = st.slider("أعلى/أقل معدل إلغاء", 0.0, 1.0, 1.0, 0.01)
 
 # =========================
 # HR Page
 # =========================
 def hr_page():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
-    st.markdown('<div class="small-note">السجل محفوظ في قاعدة بيانات SQLite داخل مجلد <b>data/</b>.</div>', unsafe_allow_html=True)
-    st.divider()
-
-    st.markdown("### 📥 رفع قائمة سائقين (لإضافة الجدد فقط)")
-    hr_list = st.file_uploader("ارفع ملف Excel يحتوي على معرف السائق واسم السائق (اختياري)", type=["xlsx"], key="hr_list")
-
-    if hr_list:
-        df_list = read_first_sheet_excel_bytes(hr_list.getvalue())
-        st.success("تم قراءة الملف. اختر الأعمدة الصحيحة:")
-
-        col_id = st.selectbox("عمود معرف السائق", options=list(df_list.columns), key="hr_col_id")
-        col_name = st.selectbox("عمود اسم السائق", options=list(df_list.columns), key="hr_col_name")
-        col_user = st.selectbox("عمود رقم المستخدم (إن وجد)", options=["(بدون)"] + list(df_list.columns), key="hr_col_user")
-
-        if st.button("✅ إضافة/تحديث السائقين من الملف"):
-            processed = 0
-            for _, r in df_list.iterrows():
-                did = safe_to_numeric(r.get(col_id))
-                if pd.isna(did):
-                    continue
-                did = int(did)
-                name = str(r.get(col_name, "")).strip()
-                user_id = ""
-                if col_user != "(بدون)":
-                    user_id = str(r.get(col_user, "")).strip()
-                upsert_driver(did, driver_name=name, user_id=user_id)
-                processed += 1
-            st.success(f"تمت المعالجة: {processed} صف (الجدد يتم إضافتهم تلقائياً).")
-
-    st.divider()
-
-    st.markdown("### ➕ إضافة/تحديث سائق")
-    with st.form("hr_add_driver"):
-        d_id = st.text_input("معرف السائق")
-        d_name = st.text_input("اسم السائق")
-        u_id = st.text_input("رقم المستخدم (User ID)")
-        s_date = st.text_input("تاريخ المباشرة (مثال: 2026-02-28)")
-        status = st.selectbox("الحالة", ["نشط", "موقوف", "منتهي", "إجازة"])
-        notes = st.text_area("ملاحظات", "")
-        submit = st.form_submit_button("حفظ")
-        if submit:
-            if d_id.strip() == "" or not d_id.strip().isdigit():
-                st.error("أدخل معرف سائق صحيح (رقم).")
-            else:
-                upsert_driver(int(d_id), driver_name=d_name, user_id=u_id, start_date=s_date, status=status, notes=notes)
-                st.success("تم حفظ السائق.")
-
-    st.divider()
-
-    st.markdown("### 📋 سجل السائقين")
     registry = get_hr_registry()
     st.dataframe(registry, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    st.markdown("### 🔎 تفاصيل سائق")
-    driver_ids = registry["معرف_السائق"].dropna().astype(int).tolist() if len(registry) else []
-    if not driver_ids:
-        st.info("لا يوجد سائقون بعد.")
-        return
-
-    selected_id = st.selectbox("اختر معرف السائق", driver_ids)
-    d, w, e, docs = get_driver_full(int(selected_id))
-    drow = d.iloc[0] if len(d) else None
-
-    if drow is not None:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("معرف السائق", str(drow.get("driver_id", "")))
-        c2.metric("اسم السائق", str(drow.get("driver_name", "")))
-        c3.metric("رقم المستخدم", str(drow.get("user_id", "")))
-        c4.metric("تاريخ المباشرة", str(drow.get("start_date", "")))
-
-        st.write(f"**الحالة:** {drow.get('status','')}")
-        if str(drow.get("notes", "")).strip():
-            st.write(f"**ملاحظات:** {drow.get('notes','')}")
-
-    st.divider()
-
-    colA, colB = st.columns(2)
-    with colA:
-        st.markdown("### ⚠️ إضافة تحذير")
-        with st.form("hr_add_warning"):
-            w_date = st.text_input("تاريخ التحذير", value=datetime.now().strftime("%Y-%m-%d"))
-            w_type = st.text_input("نوع التحذير", "")
-            w_details = st.text_area("تفاصيل", "")
-            w_submit = st.form_submit_button("إضافة تحذير")
-            if w_submit:
-                add_warning(int(selected_id), w_date, w_type, w_details)
-                st.success("تم إضافة التحذير.")
-                st.rerun()
-
-    with colB:
-        st.markdown("### 💰 إضافة مصروف")
-        with st.form("hr_add_expense"):
-            e_date = st.text_input("تاريخ المصروف", value=datetime.now().strftime("%Y-%m-%d"))
-            amount = st.number_input("المبلغ", min_value=0.0, value=0.0, step=1.0)
-            e_type = st.text_input("نوع المصروف", "")
-            e_details = st.text_area("تفاصيل", "")
-            e_submit = st.form_submit_button("إضافة مصروف")
-            if e_submit:
-                add_expense(int(selected_id), e_date, float(amount), e_type, e_details)
-                st.success("تم إضافة المصروف.")
-                st.rerun()
-
-    st.divider()
-
-    st.markdown("### 📎 رفع مستندات السائق")
-    doc_file = st.file_uploader("ارفع مستند", type=["pdf", "png", "jpg", "jpeg", "doc", "docx"], key="hr_doc_file")
-    doc_type = st.text_input("نوع المستند (مثال: هوية / رخصة / عقد)", key="hr_doc_type")
-    doc_notes = st.text_input("ملاحظات المستند", key="hr_doc_notes")
-
-    if doc_file and st.button("حفظ المستند"):
-        driver_folder = UPLOADS_DIR / str(int(selected_id))
-        driver_folder.mkdir(exist_ok=True)
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = doc_file.name.replace("/", "_").replace("\\", "_")
-        save_path = driver_folder / f"{ts}_{safe_name}"
-
-        with open(save_path, "wb") as f_out:
-            f_out.write(doc_file.getvalue())
-
-        add_document(int(selected_id), safe_name, str(save_path), doc_type, doc_notes)
-        st.success("تم حفظ المستند.")
-        st.rerun()
-
-    st.markdown("### 📚 سجل التحذيرات")
-    if len(w):
-        show_w = w[["warning_date", "warning_type", "details"]].rename(columns={
-            "warning_date": "التاريخ",
-            "warning_type": "النوع",
-            "details": "التفاصيل"
-        })
-        st.dataframe(show_w, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد تحذيرات.")
-
-    st.markdown("### 💳 سجل المصاريف")
-    if len(e):
-        show_e = e[["expense_date", "amount", "expense_type", "details"]].rename(columns={
-            "expense_date": "التاريخ",
-            "amount": "المبلغ",
-            "expense_type": "النوع",
-            "details": "التفاصيل"
-        })
-        st.dataframe(show_e, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد مصاريف.")
-
-    st.markdown("### 🗂️ المستندات")
-    if len(docs):
-        show_d = docs[["uploaded_at", "filename", "doc_type", "notes", "path"]].rename(columns={
-            "uploaded_at": "تاريخ الرفع",
-            "filename": "الملف",
-            "doc_type": "نوع المستند",
-            "notes": "ملاحظات",
-            "path": "المسار"
-        })
-        st.dataframe(show_d, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد مستندات.")
 
 # =========================
 # Dashboard logic (Ops/Sup)
 # =========================
 def dashboard_logic():
     if not uploaded_files:
-        st.info("ارفع ملفات Excel للبدء (على الأقل ملف الأداء).")
+        st.info("ارفع ملف/ملفات للبدء.")
         st.stop()
 
     file_items = []
@@ -654,207 +474,184 @@ def dashboard_logic():
 
     perf_candidates = [x for x in file_items if x["kind_guess"] == "performance"]
 
-    def file_picker(label, options, key):
+    def file_picker(options, key):
         names = [o["name"] for o in options]
-        chosen = st.sidebar.selectbox(label, names, key=key)
+        chosen = st.sidebar.selectbox("ملف الأداء", names, key=key)
         return next(o for o in options if o["name"] == chosen)
 
     if len(perf_candidates) == 1:
         perf_item = perf_candidates[0]
     elif len(perf_candidates) > 1:
-        st.sidebar.warning("تم اكتشاف أكثر من ملف أداء. اختر الملف الصحيح:")
-        perf_item = file_picker("اختر ملف الأداء", perf_candidates, "pick_perf")
+        perf_item = file_picker(perf_candidates, "pick_perf")
     else:
-        st.sidebar.warning("لم يتم اكتشاف ملف الأداء تلقائيًا. اختر ملف الأداء يدويًا:")
-        perf_item = file_picker("اختر ملف الأداء", file_items, "pick_perf_manual")
+        perf_item = file_picker(file_items, "pick_perf_manual")
 
     perf = build_performance_report(perf_item["df"])
 
-    # Sync drivers into HR DB automatically
+    # Sync names into HR DB
     for _, r in perf.iterrows():
-        did = r.get("معرف_السائق")
-        name = r.get("اسم_السائق")
+        did = r.get("معرّف السائق")
+        name = r.get("اسم السائق")
         if pd.isna(did):
             continue
         upsert_driver(int(did), driver_name=str(name).strip())
 
-    # Merge FR/VDA from other uploaded files if provided
-    # We will try to find columns by name in any other file and merge by driver id
     master = perf.copy()
 
+    # Merge FR/VDA from other files
     for item in file_items:
         if item["name"] == perf_item["name"]:
             continue
         df = item["df"].copy()
 
-        # detect driver id column in that file
-        id_col = pick(df.columns, ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"])
+        id_col = pick(df.columns, PERF_COLS["driver_id"])
         if not id_col:
             continue
 
         df_id = pd.to_numeric(df[id_col], errors="coerce").astype("Int64")
-
         fr_col = pick(df.columns, PERF_COLS["fr"])
         vda_col = pick(df.columns, PERF_COLS["vda"])
 
-        temp = pd.DataFrame({"معرف_السائق": df_id})
-
+        temp = pd.DataFrame({"معرّف السائق": df_id})
+        has_any = False
         if fr_col:
-            temp["FR"] = safe_to_numeric(df[fr_col]).fillna(0)
+            temp["FR"] = safe_to_numeric(df[fr_col]).fillna(0); has_any = True
         if vda_col:
-            temp["VDA"] = safe_to_numeric(df[vda_col]).fillna(0)
+            temp["VDA"] = safe_to_numeric(df[vda_col]).fillna(0); has_any = True
 
-        if ("FR" in temp.columns) or ("VDA" in temp.columns):
-            master = master.merge(temp.drop_duplicates("معرف_السائق"), on="معرف_السائق", how="left")
+        if has_any:
+            master = master.merge(temp.drop_duplicates("معرّف السائق"), on="معرّف السائق", how="left")
 
     if "FR" in master.columns:
         master["FR"] = master["FR"].fillna(0)
     if "VDA" in master.columns:
         master["VDA"] = master["VDA"].fillna(0)
 
-    # Filters
     f = master.copy()
     if search.strip():
         s = search.strip().lower()
         f = f[
-            f["اسم_السائق"].str.lower().str.contains(s, na=False)
-            | f["معرف_السائق"].astype(str).str.contains(s, na=False)
+            f["اسم السائق"].str.lower().str.contains(s, na=False)
+            | f["معرّف السائق"].astype(str).str.contains(s, na=False)
         ]
+    f = f[(f["معدل توصيل"] >= min_delivery)]
+    f = f[(f["معدل الغاء"] <= max_cancel)]
 
-    f = f[(f["معدل_توصيل"] >= min_delivery)]
-    # keep slider name but no longer used exactly like before; leaving as-is
-    f = f[(f["معدل_الغاء"] <= max_cancel)]
+    # Priority
+    f["تنبيه الغاء"] = (f["معدل الغاء"] <= CANCEL_RED_THRESHOLD).astype(int)
+    f["تنبيه توصيل"] = (f["معدل توصيل"] < 1.0).astype(int)
+    f["تنبيه طلبات"] = (f["طلبات"] < ORDERS_TARGET_MONTH).astype(int)
+    f["تنبيه رفض"] = (f["المهام المرفوضة"] > 0).astype(int)
 
-    # PRIORITY score per your requirements
-    f["تنبيه_الغاء"] = (f["معدل_الغاء"] <= CANCEL_RED_THRESHOLD).astype(int)
-    f["تنبيه_توصيل"] = (f["معدل_توصيل"] < 1.0).astype(int)
-    f["تنبيه_طلبات"] = (f["طلبات"] < ORDERS_TARGET_MONTH).astype(int)
-    f["تنبيه_رفض"] = (f["المهام_المرفوضة"] > 0).astype(int)
-
-    # Make a numeric priority score (higher = more urgent)
-    # - Cancel alert strongest
-    # - Delivery: the lower the delivery, the higher the priority
-    # - Orders: the lower than 450, the higher
-    # - Rejections: count contributes
-    delivery_gap = (1.0 - f["معدل_توصيل"]).clip(lower=0)
+    delivery_gap = (1.0 - f["معدل توصيل"]).clip(lower=0)
     orders_gap = (ORDERS_TARGET_MONTH - f["طلبات"]).clip(lower=0)
 
     f["أولوية"] = (
-        f["تنبيه_الغاء"] * 100000
+        f["تنبيه الغاء"] * 100000
         + delivery_gap * 10000
-        + f["تنبيه_طلبات"] * 2000
+        + f["تنبيه طلبات"] * 2000
         + orders_gap * 2
-        + f["المهام_المرفوضة"] * 50
+        + f["المهام المرفوضة"] * 50
     )
 
     f = f.sort_values(
-        ["أولوية", "تنبيه_الغاء", "معدل_توصيل", "طلبات", "المهام_المرفوضة"],
+        ["أولوية", "تنبيه الغاء", "معدل توصيل", "طلبات", "المهام المرفوضة"],
         ascending=[False, False, True, True, False]
     ).reset_index(drop=True)
 
-    f["ترتيب_المتابعة"] = range(1, len(f) + 1)
-
+    f["ترتيب المتابعة"] = range(1, len(f) + 1)
     return f
 
 # =========================
-# Render by role
+# Render
 # =========================
 if ROLE == "الموارد البشرية":
     hr_page()
     st.stop()
 
-# Ops / Sup
 f = dashboard_logic()
 
-# KPIs (optional, simple)
+# KPI row (updated)
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("عدد السائقين (بعد الفلترة)", f"{len(f):,}")
-k2.metric("متوسط معدل التوصيل", f"{f['معدل_توصيل'].mean():.2%}" if len(f) else "—")
-k3.metric("متوسط معدل الإلغاء", f"{f['معدل_الغاء'].mean():.2%}" if len(f) else "—")
-k4.metric("متوسط الطلبات", f"{int(f['طلبات'].mean()):,}" if len(f) else "—")
+k1.metric("عدد السائقين", f"{len(f):,}")
+k2.metric("متوسط معدل التوصيل", f"{f['معدل توصيل'].mean():.2%}" if len(f) else "—")
+k3.metric("متوسط معدل الإلغاء", f"{f['معدل الغاء'].mean():.2%}" if len(f) else "—")
+k4.metric("عدد الطلبات", f"{int(f['طلبات'].sum()):,}" if len(f) else "—")
 
 st.divider()
 
-# =========================
-# Needs attention (your exact columns)
-# =========================
+# Attention table
 st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
-
-attention_cols = [
-    "ترتيب_المتابعة",
-    "معرف_السائق",
-    "اسم_السائق",
-    "معدل_توصيل",
-    "معدل_الغاء",
-    "طلبات",
-    "المهام_المرفوضة",
-]
+attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
 st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
 st.divider()
 
-# =========================
-# Driver Lookup (updated)
-# =========================
+# Driver lookup
 st.subheader("🔎 بحث سريع عن سائق (Driver Lookup)")
-
-driver_list = f["اسم_السائق"].dropna().unique().tolist()
+driver_list = f["اسم السائق"].dropna().unique().tolist()
 selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list, key="lookup_driver")
 
 if selected != "(اختر)":
-    d = f[f["اسم_السائق"] == selected].head(1).iloc[0]
+    d = f[f["اسم السائق"] == selected].head(1).iloc[0]
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-    c1.metric("معدل توصيل %", f"{float(d['معدل_توصيل']):.2%}")
+    c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
     c2.metric("طلبات", f"{int(d['طلبات']):,}")
-    c3.metric("معدل الغاء %", f"{float(d['معدل_الغاء']):.2%}")
+    c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
 
-    # Replace rejections with work days
-    wd = d.get("اعدد_ايام_العمل")
-    if pd.isna(wd):
-        c4.metric("اعدد ايام العمل", "—")
-    else:
-        c4.metric("اعدد ايام العمل", f"{int(wd):,}")
+    wd = d.get("اعدد ايام العمل")
+    c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
 
-    # FR
     fr = d.get("FR")
-    if pd.isna(fr):
-        c5.metric("FR", "—")
-    else:
-        c5.metric("FR", f"{int(fr):,}")
+    c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
 
-    # VDA
     vda = d.get("VDA")
-    if pd.isna(vda):
-        c6.metric("VDA", "—")
-    else:
-        c6.metric("VDA", f"{int(vda):,}")
+    c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
 
     with st.expander("عرض جميع بيانات السائق"):
-        st.dataframe(pd.DataFrame(d).T, use_container_width=True)
+        wanted = [
+            "معرّف السائق",
+            "اسم السائق",
+            "اسم السائق (مكرر)",
+            "المهام التي تم تسليمها",
+            "المهام المرفوضة",
+            "المهام المرفوضة (السائق)",
+            "المهام المرفوضة تلقائيًا (تلقائياً)",
+            "معدل الإلغاء بسبب مشاكل التوصيل",
+            "نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)",
+            "متوسط مدة التوصيل لكل طلب مكتمل",
+        ]
+        row = pd.DataFrame([{col: d.get(col, pd.NA) for col in wanted}])
+
+        # Coerce percent cols
+        for pc in ["معدل الإلغاء بسبب مشاكل التوصيل", "نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"]:
+            row[pc] = pd.to_numeric(row[pc], errors="coerce")
+
+        st.dataframe(
+            row.style.format({
+                "معدل الإلغاء بسبب مشاكل التوصيل": "{:.2%}",
+                "نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)": "{:.2%}",
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
 st.divider()
 
-# =========================
-# Bottom master table (all info)
-# =========================
+# Bottom table
 st.subheader("📋 الجدول النهائي (كامل البيانات)")
-
-bottom_cols = [
-    "معرف_السائق", "اسم_السائق",
-    "معدل_توصيل", "معدل_الغاء",
-    "طلبات", "المهام_المرفوضة",
-    "اعدد_ايام_العمل"
-]
+bottom_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل"]
 if "FR" in f.columns:
     bottom_cols.append("FR")
 if "VDA" in f.columns:
     bottom_cols.append("VDA")
 
-# Format percentages nicely
-bottom_df = f[bottom_cols].copy()
-st.dataframe(bottom_df.style.format({"معدل_توصيل": "{:.2%}", "معدل_الغاء": "{:.2%}"}), use_container_width=True, hide_index=True)
+st.dataframe(
+    f[bottom_cols].style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}"}),
+    use_container_width=True,
+    hide_index=True
+)
 
 st.download_button(
     "⬇️ تحميل النتائج CSV",
@@ -862,7 +659,3 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
-
-
-
-
