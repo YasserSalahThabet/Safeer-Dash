@@ -56,13 +56,36 @@ st.markdown(
 st.markdown(
     """
     <style>
-      /* Hide "Drag and drop files here" + file size help text in the uploader */
-      [data-testid="stFileUploaderDropzone"] div div div span {
-          display: none !important;
-      }
-      [data-testid="stFileUploaderDropzone"] small {
-          display: none !important;
-      }
+    /* --- Make file uploader minimal --- */
+
+    /* Hide instruction text like: "Drag and drop files here" */
+    [data-testid="stFileUploaderDropzone"] *[data-testid="stMarkdownContainer"] {
+        display: none !important;
+    }
+
+    /* Hide small helper text like size/limit notes */
+    [data-testid="stFileUploaderDropzone"] small {
+        display: none !important;
+    }
+
+    /* Hide any remaining text nodes inside the dropzone */
+    [data-testid="stFileUploaderDropzone"] p,
+    [data-testid="stFileUploaderDropzone"] span,
+    [data-testid="stFileUploaderDropzone"] div[data-testid="stCaptionContainer"] {
+        display: none !important;
+    }
+
+    /* Remove the big dashed upload area background */
+    [data-testid="stFileUploaderDropzone"] {
+        border: 0px !important;
+        padding: 0px !important;
+        background: transparent !important;
+    }
+
+    /* Keep only the browse button visible */
+    [data-testid="stFileUploaderDropzone"] button {
+        width: 100% !important;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -672,4 +695,5 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
