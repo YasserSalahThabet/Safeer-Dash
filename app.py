@@ -66,7 +66,7 @@ with cimg2:
     if LEFT_IMG.exists():
         st.image(str(LEFT_IMG), use_container_width=True)
 
-st.markdown("Safeer Dash")
+st.markdown("# Safeer Dash")
 st.divider()
 
 # =========================
@@ -862,6 +862,7 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
