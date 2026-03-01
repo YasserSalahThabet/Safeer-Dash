@@ -463,15 +463,19 @@ def style_attention_table(df):
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
 
-    st.markdown("### 📁")
+    # Upload section (clean)
+    st.markdown("### 📁 رفع ملفات")
     uploaded_files = st.file_uploader(
-        "رفع ملفات",
+        label="",
         type=["xlsx"],
         accept_multiple_files=True,
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        help=None
     )
 
     st.divider()
+
+    # Filters
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
     max_cancel = st.slider("أعلى/أقل معدل إلغاء", 0.0, 1.0, 1.0, 0.01)
@@ -687,6 +691,7 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
