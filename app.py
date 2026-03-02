@@ -84,6 +84,10 @@ st.markdown(
     div[data-testid="stMetricValue"] { font-size: 19px !important; }
     div[data-testid="stMetricLabel"] { font-size: 11px !important; opacity: 0.8; }
     .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
+
+    /* Low-key announcements */
+    .safeer-ann { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); padding: 10px 12px; border-radius: 12px; }
+    .safeer-ann small { opacity: 0.75; }
     </style>
     """,
     unsafe_allow_html=True
@@ -100,7 +104,8 @@ with cimg2:
     if LEFT_IMG.exists():
         st.image(str(LEFT_IMG), use_container_width=True)
 
-st.markdown("# Safeer Dash")
+st.markdown("# لوحة سفير - Safeer Dash")
+st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>', unsafe_allow_html=True)
 st.divider()
 
 # =========================
@@ -159,7 +164,35 @@ require_login()
 ROLE = st.session_state.role
 
 # =========================
-# Sidebar: uploader + filters ONLY (no menu)
+# Upload state helpers (remove/clear)
+# =========================
+def sync_uploaded_files_to_state(uploaded_files):
+    if "uploaded_map" not in st.session_state:
+        st.session_state.uploaded_map = {}  # filename -> {"name","bytes","size"}
+
+    if uploaded_files:
+        for uf in uploaded_files:
+            b = uf.getvalue()
+            st.session_state.uploaded_map[uf.name] = {
+                "name": uf.name,
+                "bytes": b,
+                "size": getattr(uf, "size", len(b)),
+            }
+
+def get_active_uploaded_items():
+    if "uploaded_map" not in st.session_state:
+        return []
+    return list(st.session_state.uploaded_map.values())
+
+def remove_uploaded_item(filename: str):
+    if "uploaded_map" in st.session_state and filename in st.session_state.uploaded_map:
+        del st.session_state.uploaded_map[filename]
+
+def clear_all_uploaded_items():
+    st.session_state.uploaded_map = {}
+
+# =========================
+# Sidebar: uploader + files tab + notifications + filters ONLY (no menu)
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
@@ -172,13 +205,39 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
+    # Keep app's active files in session_state (so you can remove them)
+    sync_uploaded_files_to_state(uploaded_files)
+    active_items = get_active_uploaded_items()
+
+    # Low-key tab to view/remove uploaded files
+    with st.expander(f"📄 الملفات المقروءة ({len(active_items)})", expanded=False):
+        if not active_items:
+            st.caption("لا توجد ملفات حالياً.")
+        else:
+            for item in active_items:
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    kb = item["size"] / 1024
+                    st.caption(f"• {item['name']} — {kb:,.0f} KB")
+                with c2:
+                    if st.button("✖", key=f"rm_{item['name']}"):
+                        remove_uploaded_item(item["name"])
+                        st.rerun()
+
+            st.divider()
+            if st.button("🧹 حذف الكل", key="clear_all_uploads"):
+                clear_all_uploaded_items()
+                st.rerun()
+
     st.divider()
+
+    # Filters
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
     max_cancel = st.slider("أعلى معدل إلغاء (فلترة)", 0.0, 1.0, 1.0, 0.01)
 
 # =========================
-# SQLite (HR registry)
+# SQLite (HR + Announcements)
 # =========================
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -186,6 +245,8 @@ def db_conn():
 def init_db():
     con = db_conn()
     cur = con.cursor()
+
+    # HR drivers registry
     cur.execute("""
     CREATE TABLE IF NOT EXISTS drivers (
         driver_id INTEGER PRIMARY KEY,
@@ -198,6 +259,19 @@ def init_db():
         updated_at TEXT
     )
     """)
+
+    # Announcements (central web notifications)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        created_by_role TEXT NOT NULL,
+        title TEXT,
+        body TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1
+    )
+    """)
+
     con.commit()
     con.close()
 
@@ -242,6 +316,103 @@ def get_hr_registry() -> pd.DataFrame:
     """, con)
     con.close()
     return df
+
+# =========================
+# Announcements: central notifications
+# =========================
+def add_announcement(body: str, title: str = "", created_by_role: str = ""):
+    body = (body or "").strip()
+    title = (title or "").strip()
+    if not body:
+        return False
+
+    con = db_conn()
+    cur = con.cursor()
+    cur.execute(
+        "INSERT INTO announcements (created_at, created_by_role, title, body, is_active) VALUES (?, ?, ?, ?, 1)",
+        (now_ts(), created_by_role or "", title, body)
+    )
+    con.commit()
+    con.close()
+    return True
+
+def fetch_announcements(limit: int = 5) -> pd.DataFrame:
+    con = db_conn()
+    df = pd.read_sql_query(
+        """
+        SELECT id, created_at, created_by_role, title, body
+        FROM announcements
+        WHERE is_active = 1
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        con,
+        params=(int(limit),)
+    )
+    con.close()
+    return df
+
+def render_announcements_top():
+    ann = fetch_announcements(limit=3)
+    if ann.empty:
+        return
+    with st.expander("📢 الإعلانات", expanded=False):
+        for _, r in ann.iterrows():
+            title = (r.get("title") or "").strip()
+            who = (r.get("created_by_role") or "").strip()
+            created = (r.get("created_at") or "").strip()
+            body = (r.get("body") or "").strip()
+
+            header = title if title else "إعلان"
+            meta = f"{created}" + (f" — {who}" if who else "")
+            st.markdown(
+                f"""
+                <div class="safeer-ann">
+                  <b>{header}</b><br/>
+                  <small>{meta}</small><br/>
+                  <div style="margin-top:6px">{body}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.write("")
+
+def render_announcement_sender_sidebar():
+    with st.sidebar:
+        st.divider()
+        with st.expander("📣 إرسال إعلان", expanded=False):
+            title = st.text_input("عنوان (اختياري)", key="ann_title")
+            body = st.text_area("نص الإعلان", key="ann_body", height=90, placeholder="اكتب الإعلان هنا...")
+            c1, c2 = st.columns([1, 1])
+            send = c1.button("إرسال", key="ann_send")
+            refresh = c2.button("تحديث", key="ann_refresh")
+
+            if send:
+                ok = add_announcement(body=body, title=title, created_by_role=ROLE)
+                if ok:
+                    try:
+                        st.toast("تم إرسال الإعلان ✅")
+                    except Exception:
+                        st.success("تم إرسال الإعلان ✅")
+                    st.session_state.ann_title = ""
+                    st.session_state.ann_body = ""
+                    st.rerun()
+                else:
+                    st.warning("اكتب نص الإعلان أولاً.")
+
+            if refresh:
+                st.rerun()
+
+        # Low-key recent list in sidebar (optional)
+        ann = fetch_announcements(limit=3)
+        if not ann.empty:
+            st.caption("آخر الإعلانات")
+            for _, r in ann.iterrows():
+                t = (r.get("title") or "إعلان").strip()
+                st.caption(f"• {t}")
+
+# Announcement sender available for ALL users
+render_announcement_sender_sidebar()
 
 # =========================
 # Excel helpers
@@ -354,18 +525,19 @@ def style_attention_table(df):
     return sty
 
 # =========================
-# Build master from uploads
+# Build master from uploads (reads from ACTIVE list, not uploader widget)
 # =========================
 def build_master_from_uploads():
-    if not uploaded_files:
+    active_items = get_active_uploaded_items()
+    if not active_items:
         return None
 
     file_items = []
-    for uf in uploaded_files:
-        b = uf.getvalue()
+    for item in active_items:
+        b = item["bytes"]
         df = read_first_sheet_excel_bytes(b)
         kind = detect_file_type(set(df.columns))
-        file_items.append({"name": uf.name, "df": df, "kind": kind})
+        file_items.append({"name": item["name"], "df": df, "kind": kind})
 
     perf_item = None
     for item in file_items:
@@ -430,6 +602,8 @@ def build_master_from_uploads():
 # =========================
 def page_admin(f: pd.DataFrame | None):
     st.subheader("📊 الإدارة — نظرة  (يومي / شهري)")
+    render_announcements_top()
+
     if f is None:
         st.info("قم بتحميل ملف/ملفات الأداء لعرض مؤشرات الإدارة.")
         return
@@ -457,6 +631,8 @@ def page_admin(f: pd.DataFrame | None):
 
 def page_ops(f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
+    render_announcements_top()
+
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
@@ -513,24 +689,29 @@ def page_ops(f: pd.DataFrame | None):
 
 def page_hr():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
+    render_announcements_top()
     registry = get_hr_registry()
     st.dataframe(registry, use_container_width=True, hide_index=True)
 
 def page_supervision(f: pd.DataFrame | None):
     st.subheader("🧭 الإشراف")
+    render_announcements_top()
+
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
-    st.markdown("### 🚨 سائقون يحتاجون متابعة )")
+    st.markdown("### 🚨 سائقون يحتاجون متابعة")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
 
 def page_fleet():
     st.subheader("🚗 السيارات / الحركة")
+    render_announcements_top()
     st.info("جاهز — عند تزويدي بملف السيارات/الحركة (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
 
 def page_accounts():
     st.subheader("💰 الحسابات")
+    render_announcements_top()
     st.info("جاهز — عند تزويدي بملف الحسابات (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
 
 # =========================
@@ -552,8 +733,3 @@ elif ROLE == "الحسابات":
     page_accounts()
 else:
     st.info("الدور غير معروف.")
-
-
-
-
-
