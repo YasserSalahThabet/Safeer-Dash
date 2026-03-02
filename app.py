@@ -85,10 +85,18 @@ st.markdown(
     div[data-testid="stFileUploader"] ul {
         display: none !important;
     }
+
+    /* Small polish */
+    .block-container { padding-top: 1rem; }
+    div[data-testid="stMetric"] { background: rgba(255,255,255,0.02); padding: 8px; border-radius: 12px; }
+    div[data-testid="stMetricValue"] { font-size: 19px !important; }
+    div[data-testid="stMetricLabel"] { font-size: 11px !important; opacity: 0.8; }
+    .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
     </style>
     """,
     unsafe_allow_html=True
 )
+
 # =========================
 # Header images (swapped)
 # =========================
@@ -275,23 +283,12 @@ def get_hr_registry() -> pd.DataFrame:
             d.driver_name AS اسم_السائق,
             d.user_id AS رقم_المستخدم,
             d.start_date AS تاريخ_المباشرة,
-            d.status AS الحالة,
-            (SELECT COUNT(*) FROM warnings w WHERE w.driver_id = d.driver_id) AS عدد_التحذيرات,
-            (SELECT COALESCE(SUM(amount),0) FROM expenses e WHERE e.driver_id = d.driver_id) AS مجموع_المصاريف
+            d.status AS الحالة
         FROM drivers d
         ORDER BY d.driver_id
     """, con)
     con.close()
     return df
-
-def get_driver_full(driver_id: int):
-    con = db_conn()
-    d = pd.read_sql_query("SELECT * FROM drivers WHERE driver_id = ?", con, params=(int(driver_id),))
-    w = pd.read_sql_query("SELECT * FROM warnings WHERE driver_id = ? ORDER BY warning_date DESC", con, params=(int(driver_id),))
-    e = pd.read_sql_query("SELECT * FROM expenses WHERE driver_id = ? ORDER BY expense_date DESC", con, params=(int(driver_id),))
-    docs = pd.read_sql_query("SELECT * FROM documents WHERE driver_id = ? ORDER BY uploaded_at DESC", con, params=(int(driver_id),))
-    con.close()
-    return d, w, e, docs
 
 # =========================
 # Excel helpers
@@ -321,7 +318,7 @@ def pick(df_cols, candidates):
 # =========================
 # RULES / TARGETS
 # =========================
-CANCEL_RED_THRESHOLD = 0.002        # 0.20%
+CANCEL_ALERT_THRESHOLD = 0.002   # 0.20%  -> alert when >= this
 ORDERS_TARGET_MONTH = 450
 
 # =========================
@@ -331,17 +328,13 @@ PERF_COLS = {
     "driver_id": ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"],
     "first_name": ["اسم السائق", "First Name", "first_name"],
     "last_name": ["اسم السائق.1", "Last Name", "last_name"],
-
     "delivery_rate": ["معدل اكتمال الطلبات (غير متعلق بالتوصيل)", "معدل التوصيل", "معدل توصيل", "Delivery_Rate", "delivery_rate"],
     "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل الغاء", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
     "orders_delivered": ["المهام التي تم تسليمها", "طلبات", "الطلبات", "الطلبات المسلمة", "طلبات مكتملة", "Orders_Delivered", "orders_delivered"],
     "reject_total": ["المهام المرفوضة", "المهام المرفوضة (السائق)", "رفض السائق", "Driver Rejections", "driver_rejections"],
-
     "work_days": ["اعدد ايام العمل", "عدد ايام العمل", "أيام العمل", "Work Days", "work_days", "days_worked"],
-
     "fr": ["FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "face_recognition"],
     "vda": ["VDA", "vda", "مؤشر VDA", "مؤشر_إضافي"],
-
     "auto_reject": ["المهام المرفوضة تلقائيًا (تلقائياً)", "المهام المرفوضة تلقائيا", "Auto Reject", "auto_reject"],
     "ontime_d": ["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)", "نسبة التسليم في الوقت", "On-time (D)", "ontime_d"],
     "avg_delivery_time": ["متوسط مدة التوصيل لكل طلب مكتمل", "متوسط مدة التوصيل", "Avg Delivery Time", "avg_delivery_time"],
@@ -367,7 +360,6 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({
         "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
         "اسم السائق": driver_name,
-
         "معدل توصيل": safe_to_numeric(df_raw[mapped["delivery_rate"]]),
         "معدل الغاء": safe_to_numeric(df_raw[mapped["cancel_rate"]]),
         "طلبات": safe_to_numeric(df_raw[mapped["orders_delivered"]]),
@@ -375,8 +367,11 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     })
 
     out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
+
+    # Rates are fractions (0..1). Keep them as such.
     out["معدل توصيل"] = out["معدل توصيل"].fillna(0).clip(0, 1)
     out["معدل الغاء"] = out["معدل الغاء"].fillna(0).clip(0, 1)
+
     out["طلبات"] = out["طلبات"].fillna(0)
     out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
 
@@ -395,40 +390,15 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     else:
         out["VDA"] = pd.NA
 
-    # Keep expander raw fields stable
+    # Expander fields
     out["اسم السائق (مكرر)"] = out["اسم السائق"]
 
-    # Requested fields (populate from raw if exists, else map/NA)
-    if "المهام التي تم تسليمها" in df_raw.columns:
-        out["المهام التي تم تسليمها"] = df_raw["المهام التي تم تسليمها"]
-    else:
-        out["المهام التي تم تسليمها"] = df_raw[mapped["orders_delivered"]]
-
-    if "المهام المرفوضة" in df_raw.columns:
-        out["المهام المرفوضة"] = df_raw["المهام المرفوضة"]
-    # already exists as metric
-
-    if "المهام المرفوضة (السائق)" in df_raw.columns:
-        out["المهام المرفوضة (السائق)"] = df_raw["المهام المرفوضة (السائق)"]
-    else:
-        out["المهام المرفوضة (السائق)"] = df_raw[mapped["reject_total"]]
-
-    if mapped.get("auto_reject"):
-        out["المهام المرفوضة تلقائيًا (تلقائياً)"] = df_raw[mapped["auto_reject"]]
-    else:
-        out["المهام المرفوضة تلقائيًا (تلقائياً)"] = pd.NA
-
+    out["المهام التي تم تسليمها"] = df_raw["المهام التي تم تسليمها"] if "المهام التي تم تسليمها" in df_raw.columns else df_raw[mapped["orders_delivered"]]
+    out["المهام المرفوضة (السائق)"] = df_raw["المهام المرفوضة (السائق)"] if "المهام المرفوضة (السائق)" in df_raw.columns else df_raw[mapped["reject_total"]]
+    out["المهام المرفوضة تلقائيًا (تلقائياً)"] = df_raw[mapped["auto_reject"]] if mapped.get("auto_reject") else pd.NA
     out["معدل الإلغاء بسبب مشاكل التوصيل"] = df_raw[mapped["cancel_rate"]]
-
-    if mapped.get("ontime_d"):
-        out["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"] = df_raw[mapped["ontime_d"]]
-    else:
-        out["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"] = pd.NA
-
-    if mapped.get("avg_delivery_time"):
-        out["متوسط مدة التوصيل لكل طلب مكتمل"] = df_raw[mapped["avg_delivery_time"]]
-    else:
-        out["متوسط مدة التوصيل لكل طلب مكتمل"] = pd.NA
+    out["نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"] = df_raw[mapped["ontime_d"]] if mapped.get("ontime_d") else pd.NA
+    out["متوسط مدة التوصيل لكل طلب مكتمل"] = df_raw[mapped["avg_delivery_time"]] if mapped.get("avg_delivery_time") else pd.NA
 
     return out
 
@@ -441,15 +411,11 @@ def detect_file_type(cols: set[str]) -> str:
     face_signals = {"Face Recognition", "Face_Recognition", "التعرف على الوجه", "FR"}
     vda_signals = {"VDA", "مؤشر VDA"}
 
-    perf_hits = len(perf_signals.intersection(cols))
-    face_hits = len(face_signals.intersection(cols))
-    vda_hits = len(vda_signals.intersection(cols))
-
-    if perf_hits >= 4:
+    if len(perf_signals.intersection(cols)) >= 4:
         return "performance"
-    if face_hits >= 1:
+    if len(face_signals.intersection(cols)) >= 1:
         return "face"
-    if vda_hits >= 1:
+    if len(vda_signals.intersection(cols)) >= 1:
         return "vda"
     return "unknown"
 
@@ -458,21 +424,40 @@ def detect_file_type(cols: set[str]) -> str:
 # =========================
 def style_attention_table(df):
     sty = df.style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}"})
-    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) <= CANCEL_RED_THRESHOLD else "", subset=["معدل الغاء"])
-    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) < 1.0 else "", subset=["معدل توصيل"])
-    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) < ORDERS_TARGET_MONTH else "", subset=["طلبات"])
-    sty = sty.applymap(lambda x: "color:red;font-weight:800;" if float(x) > 0 else "", subset=["المهام المرفوضة"])
+
+    # Cancel: red if >= 0.20%
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) >= CANCEL_ALERT_THRESHOLD else "",
+        subset=["معدل الغاء"]
+    )
+
+    # Delivery: red if < 100%
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) < 1.0 else "",
+        subset=["معدل توصيل"]
+    )
+
+    # Orders: red if < 450
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) < ORDERS_TARGET_MONTH else "",
+        subset=["طلبات"]
+    )
+
+    # Rejections: red if > 0
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) > 0 else "",
+        subset=["المهام المرفوضة"]
+    )
     return sty
 
 # =========================
-# Sidebar uploader + filters (MINIMAL)
+# Sidebar uploader + filters
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
 
-    # Big clickable upload button (multi-file)
     uploaded_files = st.file_uploader(
-        label="تحميل ملفات",          # we will hide this label visually anyway
+        label="تحميل ملفات",
         type=["xlsx"],
         accept_multiple_files=True,
         label_visibility="collapsed"
@@ -482,6 +467,7 @@ with st.sidebar:
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
     max_cancel = st.slider("أعلى/أقل معدل إلغاء", 0.0, 1.0, 1.0, 0.01)
+
 # =========================
 # HR Page
 # =========================
@@ -562,35 +548,42 @@ def dashboard_logic():
         master["VDA"] = master["VDA"].fillna(0)
 
     f = master.copy()
+
+    # Filters
     if search.strip():
         s = search.strip().lower()
         f = f[
             f["اسم السائق"].str.lower().str.contains(s, na=False)
             | f["معرّف السائق"].astype(str).str.contains(s, na=False)
         ]
+
     f = f[(f["معدل توصيل"] >= min_delivery)]
     f = f[(f["معدل الغاء"] <= max_cancel)]
 
-    # Priority
-    f["تنبيه الغاء"] = (f["معدل الغاء"] <= CANCEL_RED_THRESHOLD).astype(int)
+    # Alerts (IMPORTANT: cancel is bad when it's HIGH)
+    f["تنبيه الغاء"] = (f["معدل الغاء"] >= CANCEL_ALERT_THRESHOLD).astype(int)
     f["تنبيه توصيل"] = (f["معدل توصيل"] < 1.0).astype(int)
     f["تنبيه طلبات"] = (f["طلبات"] < ORDERS_TARGET_MONTH).astype(int)
     f["تنبيه رفض"] = (f["المهام المرفوضة"] > 0).astype(int)
 
-    delivery_gap = (1.0 - f["معدل توصيل"]).clip(lower=0)
+    delivery_gap = (1.0 - f["معدل توصيل"]).clip(lower=0)           # bigger gap => worse
+    cancel_over = (f["معدل الغاء"] - CANCEL_ALERT_THRESHOLD).clip(lower=0)  # above threshold => worse
     orders_gap = (ORDERS_TARGET_MONTH - f["طلبات"]).clip(lower=0)
 
+    # Priority score: cancel dominates
     f["أولوية"] = (
-        f["تنبيه الغاء"] * 100000
-        + delivery_gap * 10000
-        + f["تنبيه طلبات"] * 2000
-        + orders_gap * 2
-        + f["المهام المرفوضة"] * 50
+        f["تنبيه الغاء"] * 1_000_000
+        + cancel_over * 500_000
+        + delivery_gap * 50_000
+        + f["تنبيه طلبات"] * 10_000
+        + orders_gap * 5
+        + f["المهام المرفوضة"] * 200
     )
 
+    # Sort: cancel alert first + higher cancel first, then lower delivery, then low orders, then more rejects
     f = f.sort_values(
-        ["أولوية", "تنبيه الغاء", "معدل توصيل", "طلبات", "المهام المرفوضة"],
-        ascending=[False, False, True, True, False]
+        ["أولوية", "تنبيه الغاء", "معدل الغاء", "معدل توصيل", "طلبات", "المهام المرفوضة"],
+        ascending=[False, False, False, True, True, False]
     ).reset_index(drop=True)
 
     f["ترتيب المتابعة"] = range(1, len(f) + 1)
@@ -605,7 +598,7 @@ if ROLE == "الموارد البشرية":
 
 f = dashboard_logic()
 
-# KPI row (updated)
+# KPI row
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("عدد السائقين", f"{len(f):,}")
 k2.metric("متوسط معدل التوصيل", f"{f['معدل توصيل'].mean():.2%}" if len(f) else "—")
@@ -658,7 +651,6 @@ if selected != "(اختر)":
         ]
         row = pd.DataFrame([{col: d.get(col, pd.NA) for col in wanted}])
 
-        # Coerce percent cols
         for pc in ["معدل الإلغاء بسبب مشاكل التوصيل", "نسبة الطلبات التي تم تسليمها في الوقت المحدد (D)"]:
             row[pc] = pd.to_numeric(row[pc], errors="coerce")
 
@@ -693,10 +685,3 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
-
-
-
-
-
-
-
