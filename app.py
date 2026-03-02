@@ -100,8 +100,7 @@ with cimg2:
     if LEFT_IMG.exists():
         st.image(str(LEFT_IMG), use_container_width=True)
 
-st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>', unsafe_allow_html=True)
+st.markdown("# Safeer Dash")
 st.divider()
 
 # =========================
@@ -553,6 +552,7 @@ elif ROLE == "الحسابات":
     page_accounts()
 else:
     st.info("الدور غير معروف.")
+
 
 
 
