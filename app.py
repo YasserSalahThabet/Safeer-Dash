@@ -447,7 +447,7 @@ def page_admin(f: pd.DataFrame | None):
     a4.metric("متوسط معدل الإلغاء", f"{avg_cancel:.2%}")
 
     st.divider()
-    st.markdown("### 🚨 الأولوية)")
+    st.markdown("### 🚨 الأولوية")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
 
@@ -469,7 +469,7 @@ def page_ops(f: pd.DataFrame | None):
     k4.metric("عدد الطلبات", f"{int(f['طلبات'].sum()):,}" if len(f) else "—")
 
     st.divider()
-    st.subheader("🚨 الأولوية)")
+    st.subheader("🚨 الأولوية")
     attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
@@ -553,6 +553,7 @@ elif ROLE == "الحسابات":
     page_accounts()
 else:
     st.info("الدور غير معروف.")
+
 
 
 
