@@ -39,44 +39,51 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* --- Streamlit 1.54 uploader clean style --- */
+    /* ========== Streamlit 1.54 File Uploader: icon-only button ========== */
 
-    /* Hide drag & drop instructions */
-    div[data-testid="stFileUploader"] section div p {
+    /* Hide label text, "No file chosen", "Drag and drop...", "Limit..." */
+    div[data-testid="stFileUploader"] label,
+    div[data-testid="stFileUploader"] section div p,
+    div[data-testid="stFileUploader"] section small,
+    div[data-testid="stFileUploader"] section div span {
         display: none !important;
     }
 
-    /* Hide small helper text */
-    div[data-testid="stFileUploader"] section small {
-        display: none !important;
-    }
-
-    /* Remove dashed drop area */
+    /* Remove dashed dropzone styling */
     div[data-testid="stFileUploader"] section {
-        border: 0px !important;
+        border: 0 !important;
         background: transparent !important;
-        padding: 0px !important;
+        padding: 0 !important;
+        margin: 0 !important;
     }
 
-    /* Style button */
+    /* Make the button full-width and clean */
     div[data-testid="stFileUploader"] button {
         width: 100% !important;
         border-radius: 12px !important;
-        padding: 0.7rem !important;
-        font-weight: 700 !important;
+        padding: 0.75rem 0.9rem !important;
+        font-weight: 800 !important;
         font-size: 16px !important;
-        color: transparent !important;   /* Hide original text */
+
+        /* Hide original button text and replace with our own */
+        color: transparent !important;
         position: relative;
     }
 
-    /* Replace button text */
+    /* Our visible Arabic label + icon */
     div[data-testid="stFileUploader"] button::after {
-        content: "تحميل الملفات";
+        content: "📁 تحميل ملفات";
         color: white;
         position: absolute;
         left: 50%;
         top: 50%;
         transform: translate(-50%, -50%);
+        white-space: nowrap;
+    }
+
+    /* Hide the file list area below the button (where names appear) */
+    div[data-testid="stFileUploader"] ul {
+        display: none !important;
     }
     </style>
     """,
@@ -463,23 +470,18 @@ def style_attention_table(df):
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
 
-    # Upload section (clean)
-    st.markdown("### 📁 رفع ملفات")
+    # Big clickable upload button (multi-file)
     uploaded_files = st.file_uploader(
-        label="",
+        label="تحميل ملفات",          # we will hide this label visually anyway
         type=["xlsx"],
         accept_multiple_files=True,
-        label_visibility="collapsed",
-        help=None
+        label_visibility="collapsed"
     )
 
     st.divider()
-
-    # Filters
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
     max_cancel = st.slider("أعلى/أقل معدل إلغاء", 0.0, 1.0, 1.0, 0.01)
-
 # =========================
 # HR Page
 # =========================
@@ -691,6 +693,7 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
