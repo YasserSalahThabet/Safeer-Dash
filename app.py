@@ -108,7 +108,7 @@ with cimg2:
     if LEFT_IMG.exists():
         st.image(str(LEFT_IMG), use_container_width=True)
 
-st.markdown("# لوحة سفير - Safeer Dash")
+st.markdown("# Safeer Dash")
 st.markdown('<div class="safeer-subtitle">التشغيل / الموارد البشرية / الإشراف / الإدارة</div>', unsafe_allow_html=True)
 st.divider()
 
@@ -560,7 +560,7 @@ def page_supervision(f: pd.DataFrame | None):
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
-    st.markdown("### سائقون يحتاجون متابعة (الأولوية أولاً)")
+    st.markdown("### الأولوية")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
 
@@ -591,3 +591,4 @@ elif page == "السيارات / الحركة":
     page_fleet()
 elif page == "الحسابات":
     page_accounts()
+
