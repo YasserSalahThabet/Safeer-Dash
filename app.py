@@ -6,6 +6,7 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 
+
 # =========================
 # Paths / Assets
 # =========================
@@ -24,6 +25,7 @@ RIGHT_IMG = ASSETS / "right.jpg"   # change if your names differ
 LOGO_IMG = ASSETS / "logo.png"
 FAVICON_IMG = ASSETS / "favicon.png"
 
+
 # =========================
 # Page config
 # =========================
@@ -32,6 +34,7 @@ st.set_page_config(
     page_icon=str(FAVICON_IMG) if FAVICON_IMG.exists() else "🟢",
     layout="wide",
 )
+
 
 # =========================
 # CSS
@@ -85,13 +88,21 @@ st.markdown(
     div[data-testid="stMetricLabel"] { font-size: 11px !important; opacity: 0.8; }
     .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
 
-    /* Low-key announcements */
-    .safeer-ann { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); padding: 10px 12px; border-radius: 12px; }
-    .safeer-ann small { opacity: 0.75; }
+    /* Low-key file badge style */
+    .file-pill {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.05);
+        margin: 4px 6px 0 0;
+        font-size: 12px;
+        opacity: 0.9;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
+
 
 # =========================
 # Header images (swapped)
@@ -105,8 +116,12 @@ with cimg2:
         st.image(str(LEFT_IMG), use_container_width=True)
 
 st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>',
+    unsafe_allow_html=True
+)
 st.divider()
+
 
 # =========================
 # Auth / Roles
@@ -120,11 +135,19 @@ ROLES = {
     "الحسابات": "accounts_password",
 }
 
+DEFAULT_PASSWORD_ALL = "12345"
+
+
 def get_secret(key: str, default: str = "") -> str:
+    """
+    Read from st.secrets if available.
+    If secrets are missing, returns default.
+    """
     try:
         return st.secrets["auth"][key]
     except Exception:
         return default
+
 
 def require_login():
     if "logged_in" not in st.session_state:
@@ -138,6 +161,7 @@ def require_login():
         st.markdown("## تسجيل الدخول")
         role = st.selectbox("الدور", list(ROLES.keys()))
         pwd = st.text_input("كلمة المرور", type="password")
+
         col1, col2 = st.columns(2)
         login = col1.button("دخول")
         logout = col2.button("خروج")
@@ -148,51 +172,27 @@ def require_login():
             st.rerun()
 
         if login:
-            expected = get_secret(ROLES[role], "")
-            if expected and pwd == expected:
+            expected = get_secret(ROLES[role], default="").strip()
+
+            # ✅ Fix: if secrets not configured, accept DEFAULT_PASSWORD_ALL
+            if (expected and pwd == expected) or (not expected and pwd == DEFAULT_PASSWORD_ALL):
                 st.session_state.logged_in = True
                 st.session_state.role = role
                 st.rerun()
             else:
-                st.error("بيانات الدخول غير صحيحة أو لم يتم إعداد Secrets.")
+                st.error("بيانات الدخول غير صحيحة.")
 
     if not st.session_state.logged_in:
         st.info("الرجاء تسجيل الدخول من الشريط الجانبي.")
         st.stop()
 
+
 require_login()
 ROLE = st.session_state.role
 
-# =========================
-# Upload state helpers (remove/clear)
-# =========================
-def sync_uploaded_files_to_state(uploaded_files):
-    if "uploaded_map" not in st.session_state:
-        st.session_state.uploaded_map = {}  # filename -> {"name","bytes","size"}
-
-    if uploaded_files:
-        for uf in uploaded_files:
-            b = uf.getvalue()
-            st.session_state.uploaded_map[uf.name] = {
-                "name": uf.name,
-                "bytes": b,
-                "size": getattr(uf, "size", len(b)),
-            }
-
-def get_active_uploaded_items():
-    if "uploaded_map" not in st.session_state:
-        return []
-    return list(st.session_state.uploaded_map.values())
-
-def remove_uploaded_item(filename: str):
-    if "uploaded_map" in st.session_state and filename in st.session_state.uploaded_map:
-        del st.session_state.uploaded_map[filename]
-
-def clear_all_uploaded_items():
-    st.session_state.uploaded_map = {}
 
 # =========================
-# Sidebar: uploader + files tab + notifications + filters ONLY (no menu)
+# Sidebar: uploader + filters ONLY (no menu)
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
@@ -205,48 +205,53 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
-    # Keep app's active files in session_state (so you can remove them)
-    sync_uploaded_files_to_state(uploaded_files)
-    active_items = get_active_uploaded_items()
+    # low-key viewer (and ignore list)
+    if "ignored_files" not in st.session_state:
+        st.session_state.ignored_files = set()
 
-    # Low-key tab to view/remove uploaded files
-    with st.expander(f"📄 الملفات المقروءة ({len(active_items)})", expanded=False):
-        if not active_items:
-            st.caption("لا توجد ملفات حالياً.")
-        else:
-            for item in active_items:
-                c1, c2 = st.columns([4, 1])
-                with c1:
-                    kb = item["size"] / 1024
-                    st.caption(f"• {item['name']} — {kb:,.0f} KB")
-                with c2:
-                    if st.button("✖", key=f"rm_{item['name']}"):
-                        remove_uploaded_item(item["name"])
-                        st.rerun()
-
-            st.divider()
-            if st.button("🧹 حذف الكل", key="clear_all_uploads"):
-                clear_all_uploaded_items()
-                st.rerun()
+    if uploaded_files:
+        with st.expander("📎 الملفات المرفوعة (إدارة بسيطة)", expanded=False):
+            st.caption("حدد الملفات التي تريد تجاهلها (لن تُستخدم في التحليل).")
+            for f in uploaded_files:
+                colA, colB = st.columns([0.8, 0.2])
+                with colA:
+                    st.markdown(f"<span class='file-pill'>📄 {f.name}</span>", unsafe_allow_html=True)
+                with colB:
+                    ignore = st.checkbox(
+                        "تجاهل",
+                        key=f"ignore_{f.name}",
+                        value=(f.name in st.session_state.ignored_files),
+                    )
+                    if ignore:
+                        st.session_state.ignored_files.add(f.name)
+                    else:
+                        st.session_state.ignored_files.discard(f.name)
 
     st.divider()
-
-    # Filters
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
     max_cancel = st.slider("أعلى معدل إلغاء (فلترة)", 0.0, 1.0, 1.0, 0.01)
 
+    st.divider()
+    # Central announcements (send + view)
+    st.markdown("### 📣 إعلان")
+    with st.expander("إرسال إعلان (للجميع)", expanded=False):
+        ann_text = st.text_area("نص الإعلان", height=80, placeholder="اكتب إعلان مختصر…")
+        send_ann = st.button("إرسال الإعلان", use_container_width=True)
+
+
 # =========================
-# SQLite (HR + Announcements)
+# SQLite (HR registry + announcements)
 # =========================
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
+
 
 def init_db():
     con = db_conn()
     cur = con.cursor()
 
-    # HR drivers registry
+    # Drivers registry
     cur.execute("""
     CREATE TABLE IF NOT EXISTS drivers (
         driver_id INTEGER PRIMARY KEY,
@@ -260,25 +265,51 @@ def init_db():
     )
     """)
 
-    # Announcements (central web notifications)
+    # Announcements
     cur.execute("""
     CREATE TABLE IF NOT EXISTS announcements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
-        created_by_role TEXT NOT NULL,
-        title TEXT,
-        body TEXT NOT NULL,
-        is_active INTEGER DEFAULT 1
+        created_at TEXT,
+        created_by_role TEXT,
+        message TEXT
     )
     """)
 
     con.commit()
     con.close()
 
+
 init_db()
+
 
 def now_ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def add_announcement(message: str, created_by_role: str):
+    message = (message or "").strip()
+    if not message:
+        return
+    con = db_conn()
+    cur = con.cursor()
+    cur.execute(
+        "INSERT INTO announcements (created_at, created_by_role, message) VALUES (?, ?, ?)",
+        (now_ts(), created_by_role, message)
+    )
+    con.commit()
+    con.close()
+
+
+def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
+    con = db_conn()
+    df = pd.read_sql_query(
+        "SELECT created_at, created_by_role, message FROM announcements ORDER BY id DESC LIMIT ?",
+        con,
+        params=(limit,)
+    )
+    con.close()
+    return df
+
 
 def upsert_driver(driver_id: int, driver_name: str = None):
     con = db_conn()
@@ -303,13 +334,14 @@ def upsert_driver(driver_id: int, driver_name: str = None):
     con.commit()
     con.close()
 
+
 def get_hr_registry() -> pd.DataFrame:
     con = db_conn()
     df = pd.read_sql_query("""
         SELECT
             d.driver_id AS معرف_السائق,
             d.driver_name AS اسم_السائق,
-            d.status AS الحالة,
+            COALESCE(d.status,'نشط') AS الحالة,
             d.created_at AS تاريخ_الإضافة
         FROM drivers d
         ORDER BY d.driver_id
@@ -317,102 +349,23 @@ def get_hr_registry() -> pd.DataFrame:
     con.close()
     return df
 
-# =========================
-# Announcements: central notifications
-# =========================
-def add_announcement(body: str, title: str = "", created_by_role: str = ""):
-    body = (body or "").strip()
-    title = (title or "").strip()
-    if not body:
-        return False
 
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute(
-        "INSERT INTO announcements (created_at, created_by_role, title, body, is_active) VALUES (?, ?, ?, ?, 1)",
-        (now_ts(), created_by_role or "", title, body)
-    )
-    con.commit()
-    con.close()
-    return True
+# Handle announcements send (from sidebar)
+if 'send_ann' in locals() and send_ann:
+    add_announcement(ann_text, ROLE)
+    st.sidebar.success("تم إرسال الإعلان ✅")
+    st.rerun()
 
-def fetch_announcements(limit: int = 5) -> pd.DataFrame:
-    con = db_conn()
-    df = pd.read_sql_query(
-        """
-        SELECT id, created_at, created_by_role, title, body
-        FROM announcements
-        WHERE is_active = 1
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        con,
-        params=(int(limit),)
-    )
-    con.close()
-    return df
 
-def render_announcements_top():
-    ann = fetch_announcements(limit=3)
-    if ann.empty:
-        return
-    with st.expander("📢 الإعلانات", expanded=False):
+# Show announcements on top for ALL users (low-key)
+ann = get_latest_announcements(limit=3)
+if len(ann):
+    with st.container():
+        st.markdown("### 📣 الإعلانات")
         for _, r in ann.iterrows():
-            title = (r.get("title") or "").strip()
-            who = (r.get("created_by_role") or "").strip()
-            created = (r.get("created_at") or "").strip()
-            body = (r.get("body") or "").strip()
-
-            header = title if title else "إعلان"
-            meta = f"{created}" + (f" — {who}" if who else "")
-            st.markdown(
-                f"""
-                <div class="safeer-ann">
-                  <b>{header}</b><br/>
-                  <small>{meta}</small><br/>
-                  <div style="margin-top:6px">{body}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.write("")
-
-def render_announcement_sender_sidebar():
-    with st.sidebar:
+            st.info(f"**{r['created_at']}** — ({r['created_by_role']})\n\n{r['message']}")
         st.divider()
-        with st.expander("📣 إرسال إعلان", expanded=False):
-            title = st.text_input("عنوان (اختياري)", key="ann_title")
-            body = st.text_area("نص الإعلان", key="ann_body", height=90, placeholder="اكتب الإعلان هنا...")
-            c1, c2 = st.columns([1, 1])
-            send = c1.button("إرسال", key="ann_send")
-            refresh = c2.button("تحديث", key="ann_refresh")
 
-            if send:
-                ok = add_announcement(body=body, title=title, created_by_role=ROLE)
-                if ok:
-                    try:
-                        st.toast("تم إرسال الإعلان ✅")
-                    except Exception:
-                        st.success("تم إرسال الإعلان ✅")
-                    st.session_state.ann_title = ""
-                    st.session_state.ann_body = ""
-                    st.rerun()
-                else:
-                    st.warning("اكتب نص الإعلان أولاً.")
-
-            if refresh:
-                st.rerun()
-
-        # Low-key recent list in sidebar (optional)
-        ann = fetch_announcements(limit=3)
-        if not ann.empty:
-            st.caption("آخر الإعلانات")
-            for _, r in ann.iterrows():
-                t = (r.get("title") or "إعلان").strip()
-                st.caption(f"• {t}")
-
-# Announcement sender available for ALL users
-render_announcement_sender_sidebar()
 
 # =========================
 # Excel helpers
@@ -420,17 +373,43 @@ render_announcement_sender_sidebar()
 def normalize_col(c: str) -> str:
     return str(c).strip()
 
+
 @st.cache_data(show_spinner=False)
-def read_first_sheet_excel_bytes(file_bytes: bytes) -> pd.DataFrame:
+def read_excel_smart(file_bytes: bytes) -> pd.DataFrame:
+    """
+    Reads first sheet.
+    If headers are broken / missing, tries header=None and returns raw columns by index.
+    """
     bio = BytesIO(file_bytes)
     xls = pd.ExcelFile(bio)
     sheet = xls.sheet_names[0]
+
+    # First try normal header
     df = pd.read_excel(bio, sheet_name=sheet, header=0)
     df.columns = [normalize_col(c) for c in df.columns]
+
+    # Heuristic: if many column names look like numbers / floats / "NULL", treat as no-header format
+    bad = 0
+    for c in df.columns:
+        s = str(c).strip().lower()
+        if s in ("null", "nan") or s.startswith("null"):
+            bad += 1
+        # numeric-ish header like "0.1" / "25.1"
+        if s.replace(".", "", 1).isdigit():
+            bad += 1
+
+    if bad >= max(3, int(len(df.columns) * 0.25)):
+        bio2 = BytesIO(file_bytes)
+        df2 = pd.read_excel(bio2, sheet_name=sheet, header=None)
+        df2.columns = [f"col_{i}" for i in range(df2.shape[1])]
+        return df2
+
     return df
+
 
 def safe_to_numeric(s):
     return pd.to_numeric(s, errors="coerce")
+
 
 def pick(df_cols, candidates):
     cols = [normalize_col(c) for c in df_cols]
@@ -439,11 +418,13 @@ def pick(df_cols, candidates):
             return cand
     return None
 
+
 # =========================
 # RULES / TARGETS
 # =========================
 CANCEL_ALERT_THRESHOLD = 0.002   # 0.20% (alert if >=)
 ORDERS_TARGET_MONTH = 450
+
 
 # =========================
 # Column mapping (Performance)
@@ -461,57 +442,106 @@ PERF_COLS = {
     "vda": ["VDA", "vda", "مؤشر VDA"],
 }
 
-def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
+
+def build_performance_report(df_raw: pd.DataFrame, source_name: str = "") -> pd.DataFrame:
+    """
+    Supports:
+      1) Normal Arabic-header template (your usual file)
+      2) Headerless export format (like Company CHARKA...xlsx) -> map by column position
+    """
+
+    # Case A: Normal header template
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
+
     required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
     missing = [k for k in required if not mapped.get(k)]
-    if missing:
-        st.error("❌ الأعمدة المطلوبة غير موجودة في ملف الأداء: " + ", ".join(missing))
-        st.write("الأعمدة الموجودة في الملف:")
-        st.write(list(df_raw.columns))
-        st.stop()
 
-    driver_name = (
-        df_raw[mapped["first_name"]].astype(str).str.strip().fillna("")
-        + " "
-        + df_raw[mapped["last_name"]].astype(str).str.strip().fillna("")
-    ).str.replace(r"\s+", " ", regex=True).str.strip()
+    if not missing:
+        driver_name = (
+            df_raw[mapped["first_name"]].astype(str).str.strip().fillna("")
+            + " "
+            + df_raw[mapped["last_name"]].astype(str).str.strip().fillna("")
+        ).str.replace(r"\s+", " ", regex=True).str.strip()
 
-    out = pd.DataFrame({
-        "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
-        "اسم السائق": driver_name,
-        "معدل توصيل": safe_to_numeric(df_raw[mapped["delivery_rate"]]),
-        "معدل الغاء": safe_to_numeric(df_raw[mapped["cancel_rate"]]),
-        "طلبات": safe_to_numeric(df_raw[mapped["orders_delivered"]]),
-        "المهام المرفوضة": safe_to_numeric(df_raw[mapped["reject_total"]]),
-    })
+        out = pd.DataFrame({
+            "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
+            "اسم السائق": driver_name,
+            "معدل توصيل": safe_to_numeric(df_raw[mapped["delivery_rate"]]),
+            "معدل الغاء": safe_to_numeric(df_raw[mapped["cancel_rate"]]),
+            "طلبات": safe_to_numeric(df_raw[mapped["orders_delivered"]]),
+            "المهام المرفوضة": safe_to_numeric(df_raw[mapped["reject_total"]]),
+        })
 
-    out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
-    out["معدل توصيل"] = out["معدل توصيل"].fillna(0).clip(0, 1)
-    out["معدل الغاء"] = out["معدل الغاء"].fillna(0).clip(0, 1)
-    out["طلبات"] = out["طلبات"].fillna(0)
-    out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
+        out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
+        out["معدل توصيل"] = out["معدل توصيل"].fillna(0).clip(0, 1)
+        out["معدل الغاء"] = out["معدل الغاء"].fillna(0).clip(0, 1)
+        out["طلبات"] = out["طلبات"].fillna(0)
+        out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
 
-    if mapped.get("work_days") and mapped["work_days"] in df_raw.columns:
-        out["اعدد ايام العمل"] = safe_to_numeric(df_raw[mapped["work_days"]]).fillna(0)
-    else:
-        out["اعدد ايام العمل"] = pd.NA
+        if mapped.get("work_days") and mapped["work_days"] in df_raw.columns:
+            out["اعدد ايام العمل"] = safe_to_numeric(df_raw[mapped["work_days"]]).fillna(0)
+        else:
+            out["اعدد ايام العمل"] = pd.NA
 
-    if mapped.get("fr") and mapped["fr"] in df_raw.columns:
-        out["FR"] = safe_to_numeric(df_raw[mapped["fr"]]).fillna(0)
-    else:
-        out["FR"] = pd.NA
+        if mapped.get("fr") and mapped["fr"] in df_raw.columns:
+            out["FR"] = safe_to_numeric(df_raw[mapped["fr"]]).fillna(0)
+        else:
+            out["FR"] = pd.NA
 
-    if mapped.get("vda") and mapped["vda"] in df_raw.columns:
-        out["VDA"] = safe_to_numeric(df_raw[mapped["vda"]]).fillna(0)
-    else:
-        out["VDA"] = pd.NA
+        if mapped.get("vda") and mapped["vda"] in df_raw.columns:
+            out["VDA"] = safe_to_numeric(df_raw[mapped["vda"]]).fillna(0)
+        else:
+            out["VDA"] = pd.NA
 
-    return out
+        return out
 
-def detect_file_type(cols: set[str]) -> str:
+    # Case B: Headerless format (Company CHARKA... etc.)
+    # We map by position based on what we saw in your file:
+    # col_3  -> driver username/name
+    # col_6  -> driver id (very large integer)
+    # col_12 -> orders delivered (count)
+    # col_10 -> rejections/failed count (small count)
+    # col_11 -> days/period indicator (often 24)
+    if all(str(c).startswith("col_") for c in df_raw.columns) and df_raw.shape[1] >= 13:
+        out = pd.DataFrame({
+            "معرّف السائق": safe_to_numeric(df_raw["col_6"]),
+            "اسم السائق": df_raw["col_3"].astype(str).fillna("").str.strip(),
+            "معدل توصيل": 1.0,                 # not available in this export
+            "معدل الغاء": 0.0,                 # not available in this export
+            "طلبات": safe_to_numeric(df_raw["col_12"]),
+            "المهام المرفوضة": safe_to_numeric(df_raw["col_10"]),
+            "اعدد ايام العمل": safe_to_numeric(df_raw["col_11"]),
+            "FR": pd.NA,
+            "VDA": pd.NA,
+        })
+
+        out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
+        out["طلبات"] = out["طلبات"].fillna(0)
+        out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
+        out["اعدد ايام العمل"] = out["اعدد ايام العمل"].fillna(0)
+
+        # keep as percentages display-safe
+        out["معدل توصيل"] = pd.to_numeric(out["معدل توصيل"], errors="coerce").fillna(1.0).clip(0, 1)
+        out["معدل الغاء"] = pd.to_numeric(out["معدل الغاء"], errors="coerce").fillna(0.0).clip(0, 1)
+
+        # show a subtle note once
+        st.warning("⚠️ تم تحميل ملف بصيغة بدون عناوين (Headerless). بعض الحقول مثل معدل الإلغاء/التوصيل غير موجودة في هذا الملف، وتم التعامل معها بشكل افتراضي.")
+        return out
+
+    # Otherwise: unknown
+    st.error("❌ لم أستطع قراءة هذا الملف كملف أداء. ارفع ملف الأداء الأساسي أو شاركني عناوين الأعمدة.")
+    st.stop()
+
+
+def detect_file_type(df: pd.DataFrame) -> str:
+    cols = set(df.columns)
     perf_signals = {"معرّف السائق", "اسم السائق", "اسم السائق.1", "معدل الغاء", "معدل توصيل", "طلبات", "المهام المرفوضة"}
-    return "performance" if len(perf_signals.intersection(cols)) >= 3 else "unknown"
+    if len(perf_signals.intersection(cols)) >= 3:
+        return "performance"
+    if all(str(c).startswith("col_") for c in cols) and df.shape[1] >= 13:
+        return "performance"
+    return "unknown"
+
 
 # =========================
 # Styling (Attention table)
@@ -524,20 +554,26 @@ def style_attention_table(df):
     sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) > 0 else "", subset=["المهام المرفوضة"])
     return sty
 
+
 # =========================
-# Build master from uploads (reads from ACTIVE list, not uploader widget)
+# Build master from uploads
 # =========================
 def build_master_from_uploads():
-    active_items = get_active_uploaded_items()
-    if not active_items:
+    if not uploaded_files:
+        return None
+
+    # apply "ignored files"
+    active_files = [f for f in uploaded_files if f.name not in st.session_state.ignored_files]
+    if not active_files:
+        st.info("كل الملفات الحالية تم تجاهلها. قم بإلغاء تجاهل ملف واحد على الأقل.")
         return None
 
     file_items = []
-    for item in active_items:
-        b = item["bytes"]
-        df = read_first_sheet_excel_bytes(b)
-        kind = detect_file_type(set(df.columns))
-        file_items.append({"name": item["name"], "df": df, "kind": kind})
+    for uf in active_files:
+        b = uf.getvalue()
+        df = read_excel_smart(b)
+        kind = detect_file_type(df)
+        file_items.append({"name": uf.name, "df": df, "kind": kind})
 
     perf_item = None
     for item in file_items:
@@ -547,7 +583,7 @@ def build_master_from_uploads():
     if perf_item is None:
         perf_item = file_items[0]
 
-    perf = build_performance_report(perf_item["df"])
+    perf = build_performance_report(perf_item["df"], source_name=perf_item["name"])
 
     # Save driver names to DB
     for _, r in perf.iterrows():
@@ -563,9 +599,10 @@ def build_master_from_uploads():
     if search.strip():
         s = search.strip().lower()
         f = f[
-            f["اسم السائق"].str.lower().str.contains(s, na=False)
+            f["اسم السائق"].astype(str).str.lower().str.contains(s, na=False)
             | f["معرّف السائق"].astype(str).str.contains(s, na=False)
         ]
+
     f = f[(f["معدل توصيل"] >= min_delivery)]
     f = f[(f["معدل الغاء"] <= max_cancel)]
 
@@ -597,13 +634,12 @@ def build_master_from_uploads():
     f["ترتيب المتابعة"] = range(1, len(f) + 1)
     return f
 
+
 # =========================
 # Pages (by ROLE only)
 # =========================
 def page_admin(f: pd.DataFrame | None):
-    st.subheader("📊 الإدارة — نظرة  (يومي / شهري)")
-    render_announcements_top()
-
+    st.subheader("📊 الإدارة — نظرة (يومي / شهري)")
     if f is None:
         st.info("قم بتحميل ملف/ملفات الأداء لعرض مؤشرات الإدارة.")
         return
@@ -629,10 +665,9 @@ def page_admin(f: pd.DataFrame | None):
     fig = px.histogram(f, x="معدل الغاء", nbins=30, title="توزيع معدل الإلغاء (معدل الغاء)")
     st.plotly_chart(fig, use_container_width=True)
 
+
 def page_ops(f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
-    render_announcements_top()
-
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
@@ -641,7 +676,7 @@ def page_ops(f: pd.DataFrame | None):
     k1.metric("عدد السائقين", f"{len(f):,}")
     k2.metric("متوسط معدل التوصيل", f"{f['معدل توصيل'].mean():.2%}" if len(f) else "—")
     k3.metric("متوسط معدل الإلغاء", f"{f['معدل الغاء'].mean():.2%}" if len(f) else "—")
-    k4.metric("عدد الطلبات", f"{int(f['طلبات'].sum()):,}" if len(f) else "—")
+    k4.metric("عدد الطلبات", f"{int(pd.to_numeric(f['طلبات'], errors='coerce').fillna(0).sum()):,}" if len(f) else "—")
 
     st.divider()
     st.subheader("🚨 الأولوية")
@@ -649,7 +684,7 @@ def page_ops(f: pd.DataFrame | None):
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("🔎 بحث سريع ")
+    st.subheader("🔎 بحث سريع")
     driver_list = f["اسم السائق"].dropna().unique().tolist()
     selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list, key="lookup_driver")
 
@@ -657,12 +692,15 @@ def page_ops(f: pd.DataFrame | None):
         d = f[f["اسم السائق"] == selected].head(1).iloc[0]
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
-        c2.metric("طلبات", f"{int(d['طلبات']):,}")
+        c2.metric("طلبات", f"{int(float(pd.to_numeric(d['طلبات'], errors='coerce') or 0)):,}")
         c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
+
         wd = d.get("اعدد ايام العمل")
         c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
+
         fr = d.get("FR")
         c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
+
         vda = d.get("VDA")
         c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
 
@@ -687,16 +725,15 @@ def page_ops(f: pd.DataFrame | None):
         mime="text/csv",
     )
 
+
 def page_hr():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
-    render_announcements_top()
     registry = get_hr_registry()
     st.dataframe(registry, use_container_width=True, hide_index=True)
 
+
 def page_supervision(f: pd.DataFrame | None):
     st.subheader("🧭 الإشراف")
-    render_announcements_top()
-
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
@@ -704,15 +741,16 @@ def page_supervision(f: pd.DataFrame | None):
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
 
+
 def page_fleet():
     st.subheader("🚗 السيارات / الحركة")
-    render_announcements_top()
     st.info("جاهز — عند تزويدي بملف السيارات/الحركة (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
+
 
 def page_accounts():
     st.subheader("💰 الحسابات")
-    render_announcements_top()
     st.info("جاهز — عند تزويدي بملف الحسابات (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
+
 
 # =========================
 # Render (role decides)
