@@ -28,7 +28,7 @@ FAVICON_IMG = ASSETS / "favicon.png"
 # Page config
 # =========================
 st.set_page_config(
-    page_title="# Safeer Dash",
+    page_title="Safeer Dash",
     page_icon=str(FAVICON_IMG) if FAVICON_IMG.exists() else "🟢",
     layout="wide",
 )
@@ -40,8 +40,6 @@ st.markdown(
     """
     <style>
     /* ========== Streamlit 1.54 File Uploader: icon-only button ========== */
-
-    /* Hide label text, "No file chosen", "Drag and drop...", "Limit..." */
     div[data-testid="stFileUploader"] label,
     div[data-testid="stFileUploader"] section div p,
     div[data-testid="stFileUploader"] section small,
@@ -49,7 +47,6 @@ st.markdown(
         display: none !important;
     }
 
-    /* Remove dashed dropzone styling */
     div[data-testid="stFileUploader"] section {
         border: 0 !important;
         background: transparent !important;
@@ -57,20 +54,16 @@ st.markdown(
         margin: 0 !important;
     }
 
-    /* Make the button full-width and clean */
     div[data-testid="stFileUploader"] button {
         width: 100% !important;
         border-radius: 12px !important;
         padding: 0.75rem 0.9rem !important;
         font-weight: 800 !important;
         font-size: 16px !important;
-
-        /* Hide original button text and replace with our own */
         color: transparent !important;
         position: relative;
     }
 
-    /* Our visible Arabic label + icon */
     div[data-testid="stFileUploader"] button::after {
         content: "📁 تحميل ملفات";
         color: white;
@@ -81,7 +74,6 @@ st.markdown(
         white-space: nowrap;
     }
 
-    /* Hide the file list area below the button (where names appear) */
     div[data-testid="stFileUploader"] ul {
         display: none !important;
     }
@@ -108,18 +100,18 @@ with cimg2:
     if LEFT_IMG.exists():
         st.image(str(LEFT_IMG), use_container_width=True)
 
-st.markdown("# Safeer Dash")
-st.markdown('<div class="safeer-subtitle">التشغيل / الموارد البشرية / الإشراف / الإدارة</div>', unsafe_allow_html=True)
+st.markdown("# لوحة سفير - Safeer Dash")
+st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>', unsafe_allow_html=True)
 st.divider()
 
 # =========================
 # Auth / Roles
 # =========================
 ROLES = {
+    "الإدارة": "admin_password",
     "التشغيل": "ops_password",
     "الموارد البشرية": "hr_password",
     "الإشراف": "sup_password",
-    "الإدارة": "admin_password",
     "السيارات / الحركة": "fleet_password",
     "الحسابات": "accounts_password",
 }
@@ -168,6 +160,25 @@ require_login()
 ROLE = st.session_state.role
 
 # =========================
+# Sidebar: uploader + filters ONLY (no menu)
+# =========================
+with st.sidebar:
+    st.markdown(f"### المستخدم الحالي: {ROLE}")
+    st.divider()
+
+    uploaded_files = st.file_uploader(
+        label="تحميل ملفات",
+        type=["xlsx"],
+        accept_multiple_files=True,
+        label_visibility="collapsed"
+    )
+
+    st.divider()
+    search = st.text_input("بحث (المعرف / الاسم)", "")
+    min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
+    max_cancel = st.slider("أعلى معدل إلغاء (فلترة)", 0.0, 1.0, 1.0, 0.01)
+
+# =========================
 # SQLite (HR registry)
 # =========================
 def db_conn():
@@ -176,7 +187,6 @@ def db_conn():
 def init_db():
     con = db_conn()
     cur = con.cursor()
-
     cur.execute("""
     CREATE TABLE IF NOT EXISTS drivers (
         driver_id INTEGER PRIMARY KEY,
@@ -189,7 +199,6 @@ def init_db():
         updated_at TEXT
     )
     """)
-
     con.commit()
     con.close()
 
@@ -201,7 +210,6 @@ def now_ts():
 def upsert_driver(driver_id: int, driver_name: str = None):
     con = db_conn()
     cur = con.cursor()
-
     cur.execute("SELECT driver_id, driver_name FROM drivers WHERE driver_id = ?", (int(driver_id),))
     row = cur.fetchone()
 
@@ -285,7 +293,6 @@ PERF_COLS = {
 
 def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
-
     required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
     missing = [k for k in required if not mapped.get(k)]
     if missing:
@@ -334,55 +341,21 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 def detect_file_type(cols: set[str]) -> str:
     perf_signals = {"معرّف السائق", "اسم السائق", "اسم السائق.1", "معدل الغاء", "معدل توصيل", "طلبات", "المهام المرفوضة"}
-    if len(perf_signals.intersection(cols)) >= 3:
-        return "performance"
-    return "unknown"
+    return "performance" if len(perf_signals.intersection(cols)) >= 3 else "unknown"
 
 # =========================
 # Styling (Attention table)
 # =========================
 def style_attention_table(df):
     sty = df.style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}"})
-    # Cancel RED if >= 0.20%
     sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) >= CANCEL_ALERT_THRESHOLD else "", subset=["معدل الغاء"])
-    # Delivery RED if < 100%
     sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) < 1.0 else "", subset=["معدل توصيل"])
-    # Orders RED if < 450
     sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) < ORDERS_TARGET_MONTH else "", subset=["طلبات"])
-    # Rejections RED if > 0
     sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) > 0 else "", subset=["المهام المرفوضة"])
     return sty
 
 # =========================
-# Sidebar: Pages + uploader + filters
-# =========================
-PAGES_ORDER = ["الإدارة", "التشغيل", "الموارد البشرية", "الإشراف", "السيارات / الحركة", "الحسابات"]
-
-with st.sidebar:
-    st.markdown(f"### المستخدم الحالي: {ROLE}")
-
-    # Pages menu (visible for all roles)
-    page = st.radio("القائمة", PAGES_ORDER, index=0)
-
-    st.divider()
-
-    # Upload (used by الإدارة / التشغيل / الإشراف)
-    uploaded_files = st.file_uploader(
-        label="تحميل ملفات",
-        type=["xlsx"],
-        accept_multiple_files=True,
-        label_visibility="collapsed"
-    )
-
-    st.divider()
-
-    # Filters (only relevant when we have performance data)
-    search = st.text_input("بحث (المعرف / الاسم)", "")
-    min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
-    max_cancel = st.slider("أعلى معدل إلغاء (فلترة)", 0.0, 1.0, 1.0, 0.01)
-
-# =========================
-# Data builder for dashboard pages
+# Build master from uploads
 # =========================
 def build_master_from_uploads():
     if not uploaded_files:
@@ -392,16 +365,16 @@ def build_master_from_uploads():
     for uf in uploaded_files:
         b = uf.getvalue()
         df = read_first_sheet_excel_bytes(b)
-        cols = set(df.columns)
-        kind = detect_file_type(cols)
-        file_items.append({"name": uf.name, "df": df, "cols": cols, "kind_guess": kind})
+        kind = detect_file_type(set(df.columns))
+        file_items.append({"name": uf.name, "df": df, "kind": kind})
 
-    perf_candidates = [x for x in file_items if x["kind_guess"] == "performance"]
-    if not perf_candidates:
-        # try first file as performance
+    perf_item = None
+    for item in file_items:
+        if item["kind"] == "performance":
+            perf_item = item
+            break
+    if perf_item is None:
         perf_item = file_items[0]
-    else:
-        perf_item = perf_candidates[0]
 
     perf = build_performance_report(perf_item["df"])
 
@@ -415,7 +388,7 @@ def build_master_from_uploads():
 
     f = perf.copy()
 
-    # Apply filters
+    # Filters
     if search.strip():
         s = search.strip().lower()
         f = f[
@@ -454,11 +427,10 @@ def build_master_from_uploads():
     return f
 
 # =========================
-# Pages
+# Pages (by ROLE only)
 # =========================
 def page_admin(f: pd.DataFrame | None):
     st.subheader("📊 الإدارة — نظرة عامة (يومي / شهري)")
-
     if f is None:
         st.info("قم بتحميل ملف/ملفات الأداء لعرض مؤشرات الإدارة.")
         return
@@ -475,24 +447,14 @@ def page_admin(f: pd.DataFrame | None):
     a4.metric("متوسط معدل الإلغاء", f"{avg_cancel:.2%}")
 
     st.divider()
-
-    st.markdown("### 🚨 )")
+    st.markdown("### 🚨 أعلى مخاطر اليوم (حسب الأولوية)")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
 
     st.divider()
-
     st.markdown("### 📈 توزيع معدل الإلغاء")
-    fig = px.histogram(
-        f,
-        x="معدل الغاء",
-        nbins=30,
-        title="توزيع معدل الإلغاء (معدل الغاء)"
-    )
+    fig = px.histogram(f, x="معدل الغاء", nbins=30, title="توزيع معدل الإلغاء (معدل الغاء)")
     st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("### 📌 (قريباً) حركة شهرية")
-    st.caption("عند تفعيل حفظ البيانات شهرياً في SQLite سنعرض هنا مقارنة شهرية تلقائياً.")
 
 def page_ops(f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
@@ -560,7 +522,7 @@ def page_supervision(f: pd.DataFrame | None):
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
-    st.markdown("### الأولوية")
+    st.markdown("### 🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
 
@@ -573,24 +535,21 @@ def page_accounts():
     st.info("جاهز — عند تزويدي بملف الحسابات (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
 
 # =========================
-# Router
+# Render (role decides)
 # =========================
 f = build_master_from_uploads()
 
-# Optional: restrict pages by role (you can loosen later)
-# For now: allow everyone to see menu, but you can lock later if needed.
-if page == "الإدارة":
+if ROLE == "الإدارة":
     page_admin(f)
-elif page == "التشغيل":
+elif ROLE == "التشغيل":
     page_ops(f)
-elif page == "الموارد البشرية":
+elif ROLE == "الموارد البشرية":
     page_hr()
-elif page == "الإشراف":
+elif ROLE == "الإشراف":
     page_supervision(f)
-elif page == "السيارات / الحركة":
+elif ROLE == "السيارات / الحركة":
     page_fleet()
-elif page == "الحسابات":
+elif ROLE == "الحسابات":
     page_accounts()
-
-
-
+else:
+    st.info("الدور غير معروف.")
