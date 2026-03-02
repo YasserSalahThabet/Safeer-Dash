@@ -614,7 +614,7 @@ st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_wi
 st.divider()
 
 # Driver lookup
-st.subheader("🔎 بحث سريع عن سائق (Driver Lookup)")
+st.subheader("🔎 بحث عن السائق ")
 driver_list = f["اسم السائق"].dropna().unique().tolist()
 selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list, key="lookup_driver")
 
@@ -684,6 +684,7 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
 
 
