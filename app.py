@@ -607,7 +607,7 @@ k4.metric("عدد الطلبات", f"{int(f['طلبات'].sum()):,}" if len(f) e
 st.divider()
 
 # Attention table
-st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
+st.subheader("🚨 سائقون يحتاجون متابعة ")
 attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
 st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
@@ -684,4 +684,5 @@ st.download_button(
     file_name="safeer_master_filtered.csv",
     mime="text/csv",
 )
+
 
