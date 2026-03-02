@@ -430,7 +430,7 @@ def build_master_from_uploads():
 # Pages (by ROLE only)
 # =========================
 def page_admin(f: pd.DataFrame | None):
-    st.subheader("📊 الإدارة — نظرة عامة (يومي / شهري)")
+    st.subheader("📊 الإدارة — نظرة  (يومي / شهري)")
     if f is None:
         st.info("قم بتحميل ملف/ملفات الأداء لعرض مؤشرات الإدارة.")
         return
@@ -474,7 +474,7 @@ def page_ops(f: pd.DataFrame | None):
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("🔎 بحث سريع عن سائق (Driver Lookup)")
+    st.subheader("🔎 بحث سريع ")
     driver_list = f["اسم السائق"].dropna().unique().tolist()
     selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list, key="lookup_driver")
 
@@ -522,7 +522,7 @@ def page_supervision(f: pd.DataFrame | None):
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
-    st.markdown("### 🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
+    st.markdown("### 🚨 سائقون يحتاجون متابعة )")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
 
@@ -553,5 +553,6 @@ elif ROLE == "الحسابات":
     page_accounts()
 else:
     st.info("الدور غير معروف.")
+
 
 
