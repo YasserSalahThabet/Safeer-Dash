@@ -476,7 +476,7 @@ def page_admin(f: pd.DataFrame | None):
 
     st.divider()
 
-    st.markdown("### 🚨 أعلى مخاطر اليوم (حسب الأولوية)")
+    st.markdown("### 🚨  الأولوية)")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
 
@@ -591,4 +591,5 @@ elif page == "السيارات / الحركة":
     page_fleet()
 elif page == "الحسابات":
     page_accounts()
+
 
