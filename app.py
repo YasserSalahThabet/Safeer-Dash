@@ -131,7 +131,7 @@ ROLES = {
     "الإشراف": "sup_password",
     "السيارات / الحركة": "fleet_password",
     "الحسابات": "accounts_password",
-    "مسير الرواتب": "payroll_password",  # ✅ Added
+    "مسير الرواتب": "payroll_password",
 }
 FALLBACK_PASSWORD = "12345"
 
@@ -381,7 +381,7 @@ def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
 def clean_name(s: str) -> str:
     s = "" if s is None else str(s)
     s = s.replace("\u00A0", " ")
-    s = " ".join(s.split())
+    s = " ".join(s.split())  # ✅ ensures one space between first/last
     return s.strip()
 
 # =========================
@@ -454,7 +454,6 @@ def _normalize_percent_series(s: pd.Series) -> pd.Series:
     return s.clip(0, 1)
 
 def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
-    # header=None case
     if all(isinstance(c, int) for c in df_raw.columns):
         driver_id = safe_to_numeric(df_raw.iloc[:, 6]).astype("Int64")
         driver_name = df_raw.iloc[:, 3].astype(str).map(clean_name)
@@ -487,7 +486,6 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
         st.write(list(df_raw.columns))
         st.stop()
 
-    # ✅ Always add ONE space between first & last
     first = df_raw[mapped["first_name"]].astype(str).str.strip().fillna("")
     last = df_raw[mapped["last_name"]].astype(str).str.strip().fillna("")
     driver_name = (first + " " + last).str.replace(r"\s+", " ", regex=True).str.strip()
@@ -502,6 +500,7 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     })
 
     out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
+    out["اسم السائق"] = out["اسم السائق"].astype(str).map(clean_name)
     out["معدل توصيل"] = _normalize_percent_series(out["معدل توصيل"])
     out["معدل الغاء"] = _normalize_percent_series(out["معدل الغاء"])
     out["طلبات"] = pd.to_numeric(out["طلبات"], errors="coerce").fillna(0)
@@ -570,7 +569,6 @@ def build_datasets_from_uploads():
         perf_item = file_items[0]
 
     perf = build_performance_report(perf_item["df"])
-    perf["اسم السائق"] = perf["اسم السائق"].astype(str).map(clean_name)
 
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
@@ -679,11 +677,6 @@ def page_admin(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
         cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
         st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
 
-        st.divider()
-        st.markdown("### 📈 توزيع معدل الإلغاء")
-        fig = px.histogram(master_all, x="معدل الغاء", nbins=30, title="توزيع معدل الإلغاء (معدل الغاء)")
-        st.plotly_chart(fig, use_container_width=True)
-
 def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
     if master_all is None:
@@ -696,9 +689,7 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     k3.metric("متوسط معدل الإلغاء", f"{master_all['معدل الغاء'].mean():.2%}" if len(master_all) else "—")
     k4.metric("عدد الطلبات", f"{int(pd.to_numeric(master_all['طلبات'], errors='coerce').fillna(0).sum()):,}" if len(master_all) else "—")
 
-    if f is None or not len(f):
-        st.warning("لا توجد نتائج بعد الفلترة الحالية (تأكد من الفلاتر في الشريط الجانبي).")
-    else:
+    if f is not None and len(f):
         st.divider()
         st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
         attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
@@ -723,54 +714,54 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
             hide_index=True
         )
 
-        st.download_button(
-            "⬇️ تحميل النتائج CSV",
-            data=f.to_csv(index=False, encoding="utf-8-sig"),
-            file_name="safeer_master_filtered.csv",
-            mime="text/csv",
-        )
-
+    # =========================
+    # Driver lookup (names only) + always show insights
+    # =========================
     st.divider()
     st.subheader("🔎 البحث عن سائق")
 
-    # ✅ FIX: dropdown unique by Driver ID (no duplicates)
     dl = master_all.copy()
-    dl["معرّف السائق"] = pd.to_numeric(dl["معرّف السائق"], errors="coerce").astype("Int64")
     dl["اسم السائق"] = dl["اسم السائق"].astype(str).map(clean_name)
 
-    # Keep one row per driver_id (first non-empty name)
-    dl = dl.dropna(subset=["معرّف السائق"])
-    dl = dl.sort_values(["معرّف السائق"])
-    dl_unique = dl.groupby("معرّف السائق", as_index=False).agg({"اسم السائق": "first"})
-
-    options = ["(اختر)"] + [
-        f"{row['اسم السائق']} — {int(row['معرّف السائق'])}"
-        for _, row in dl_unique.sort_values("اسم السائق").iterrows()
-    ]
-
-    selected = st.selectbox("اختر السائق", options, key="lookup_driver_full")
+    # ✅ unique names only (no duplication)
+    driver_names = sorted([n for n in dl["اسم السائق"].dropna().unique().tolist() if n.strip() != ""])
+    selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_names, key="lookup_driver_name_only")
 
     if selected != "(اختر)":
-        chosen_id = None
-        try:
-            chosen_id = int(selected.split("—")[-1].strip())
-        except Exception:
-            chosen_id = None
+        # pick the "worst"/highest priority row for that name, so insights are consistent
+        if f is not None and len(f):
+            pool = f[f["اسم السائق"].astype(str).map(clean_name) == selected].copy()
+        else:
+            pool = dl[dl["اسم السائق"] == selected].copy()
 
-        drow = master_all[master_all["معرّف السائق"] == chosen_id].head(1) if chosen_id is not None else pd.DataFrame()
+        if len(pool) == 0:
+            st.warning("لا توجد بيانات لهذا السائق ضمن الفلاتر الحالية.")
+            return
 
-        if len(drow):
-            d = drow.iloc[0]
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
-            c2.metric("طلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce').fillna(0)):,.0f}")
-            c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
-            wd = d.get("اعدد ايام العمل")
-            c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
-            fr = d.get("FR")
-            c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
-            vda = d.get("VDA")
-            c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
+        # ensure priority exists
+        if "أولوية" in pool.columns:
+            pool = pool.sort_values("أولوية", ascending=False)
+        else:
+            pool = pool.sort_values(["معدل الغاء", "معدل توصيل"], ascending=[False, True])
+
+        d = pool.iloc[0]
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
+        c2.metric("طلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce').fillna(0)):,.0f}")
+        c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
+
+        wd = d.get("اعدد ايام العمل")
+        c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
+
+        fr = d.get("FR")
+        c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
+
+        vda = d.get("VDA")
+        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
+
+        with st.expander("عرض بيانات السائق (الصف المختار)"):
+            st.dataframe(pd.DataFrame([d]), use_container_width=True, hide_index=True)
 
 def page_hr():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
