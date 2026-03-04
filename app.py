@@ -115,7 +115,10 @@ with cimg2:
         st.image(str(LEFT_IMG), use_container_width=True)
 
 st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات / مسير الرواتب</div>',
+    unsafe_allow_html=True
+)
 st.divider()
 
 # =========================
@@ -128,6 +131,7 @@ ROLES = {
     "الإشراف": "sup_password",
     "السيارات / الحركة": "fleet_password",
     "الحسابات": "accounts_password",
+    "مسير الرواتب": "payroll_password",  # ✅ Added
 }
 FALLBACK_PASSWORD = "12345"
 
@@ -351,7 +355,6 @@ def add_announcement(message: str, created_by_role: str):
     msg = (message or "").strip()
     if not msg:
         return
-
     con = db_conn()
     cur = con.cursor()
     cur.execute(
@@ -377,8 +380,8 @@ def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
 # =========================
 def clean_name(s: str) -> str:
     s = "" if s is None else str(s)
-    s = s.replace("\u00A0", " ")  # NBSP
-    s = " ".join(s.split())       # collapse whitespace
+    s = s.replace("\u00A0", " ")
+    s = " ".join(s.split())
     return s.strip()
 
 # =========================
@@ -425,11 +428,11 @@ def pick(df_cols, candidates):
 # =========================
 # RULES / TARGETS
 # =========================
-CANCEL_ALERT_THRESHOLD = 0.002   # 0.20%
+CANCEL_ALERT_THRESHOLD = 0.002
 ORDERS_TARGET_MONTH = 450
 
 # =========================
-# Column mapping (normal performance report)
+# Column mapping
 # =========================
 PERF_COLS = {
     "driver_id": ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"],
@@ -451,7 +454,7 @@ def _normalize_percent_series(s: pd.Series) -> pd.Series:
     return s.clip(0, 1)
 
 def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
-    # CASE B: header=None -> integer columns
+    # header=None case
     if all(isinstance(c, int) for c in df_raw.columns):
         driver_id = safe_to_numeric(df_raw.iloc[:, 6]).astype("Int64")
         driver_name = df_raw.iloc[:, 3].astype(str).map(clean_name)
@@ -463,9 +466,9 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
         delivery_rate = (delivered / total_orders.replace(0, pd.NA)).fillna(0).clip(0, 1)
         cancel_rate = ((total_orders - delivered) / total_orders.replace(0, pd.NA)).fillna(0).clip(0, 1)
 
-        out = pd.DataFrame({
+        return pd.DataFrame({
             "معرّف السائق": driver_id,
-            "اسم السائق": driver_name,          # already cleaned
+            "اسم السائق": driver_name,
             "معدل توصيل": delivery_rate,
             "معدل الغاء": cancel_rate,
             "طلبات": delivered,
@@ -474,9 +477,7 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
             "FR": pd.NA,
             "VDA": pd.NA,
         })
-        return out
 
-    # CASE A: normal headers
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
     required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
     missing = [k for k in required if not mapped.get(k)]
@@ -486,10 +487,10 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
         st.write(list(df_raw.columns))
         st.stop()
 
-    # force exactly one space between first and last + clean extra spaces
-    first = df_raw[mapped["first_name"]].astype(str).map(clean_name)
-    last = df_raw[mapped["last_name"]].astype(str).map(clean_name)
-    driver_name = (first + " " + last).map(clean_name)
+    # ✅ Always add ONE space between first & last
+    first = df_raw[mapped["first_name"]].astype(str).str.strip().fillna("")
+    last = df_raw[mapped["last_name"]].astype(str).str.strip().fillna("")
+    driver_name = (first + " " + last).str.replace(r"\s+", " ", regex=True).str.strip()
 
     out = pd.DataFrame({
         "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
@@ -547,9 +548,7 @@ def style_attention_table(df):
     return sty
 
 # =========================
-# Build datasets from uploads:
-# - master_all: no filters (for Driver Lookup list)
-# - f: filtered/sorted (for tables)
+# Build datasets
 # =========================
 def build_datasets_from_uploads():
     if not uploaded_files:
@@ -571,11 +570,8 @@ def build_datasets_from_uploads():
         perf_item = file_items[0]
 
     perf = build_performance_report(perf_item["df"])
-
-    # Ensure clean name spacing everywhere
     perf["اسم السائق"] = perf["اسم السائق"].astype(str).map(clean_name)
 
-    # Save driver names to DB
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
         name = r.get("اسم السائق")
@@ -584,8 +580,6 @@ def build_datasets_from_uploads():
         upsert_driver(int(did), driver_name=str(name).strip())
 
     master_all = perf.copy()
-
-    # f = filtered + prioritized view
     f = perf.copy()
 
     if search.strip():
@@ -704,7 +698,6 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
 
     if f is None or not len(f):
         st.warning("لا توجد نتائج بعد الفلترة الحالية (تأكد من الفلاتر في الشريط الجانبي).")
-
     else:
         st.divider()
         st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
@@ -737,37 +730,34 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
             mime="text/csv",
         )
 
-    # Driver Lookup MUST use master_all (full list)
     st.divider()
     st.subheader("🔎 البحث عن سائق")
 
-    driver_list = (
-        master_all[["اسم السائق", "معرّف السائق"]]
-        .dropna(subset=["اسم السائق"])
-        .drop_duplicates()
-        .sort_values("اسم السائق")
-    )
+    # ✅ FIX: dropdown unique by Driver ID (no duplicates)
+    dl = master_all.copy()
+    dl["معرّف السائق"] = pd.to_numeric(dl["معرّف السائق"], errors="coerce").astype("Int64")
+    dl["اسم السائق"] = dl["اسم السائق"].astype(str).map(clean_name)
 
-    # Display label includes ID for clarity
-    options = ["(اختر)"] + [f"{row['اسم السائق']} — {int(row['معرّف السائق']) if pd.notna(row['معرّف السائق']) else ''}"
-                            for _, row in driver_list.iterrows()]
+    # Keep one row per driver_id (first non-empty name)
+    dl = dl.dropna(subset=["معرّف السائق"])
+    dl = dl.sort_values(["معرّف السائق"])
+    dl_unique = dl.groupby("معرّف السائق", as_index=False).agg({"اسم السائق": "first"})
+
+    options = ["(اختر)"] + [
+        f"{row['اسم السائق']} — {int(row['معرّف السائق'])}"
+        for _, row in dl_unique.sort_values("اسم السائق").iterrows()
+    ]
 
     selected = st.selectbox("اختر السائق", options, key="lookup_driver_full")
 
     if selected != "(اختر)":
-        # extract id from label if present
         chosen_id = None
-        if "—" in selected:
-            try:
-                chosen_id = int(selected.split("—")[-1].strip())
-            except Exception:
-                chosen_id = None
+        try:
+            chosen_id = int(selected.split("—")[-1].strip())
+        except Exception:
+            chosen_id = None
 
-        if chosen_id is not None:
-            drow = master_all[master_all["معرّف السائق"] == chosen_id].head(1)
-        else:
-            name_only = selected.split("—")[0].strip()
-            drow = master_all[master_all["اسم السائق"] == name_only].head(1)
+        drow = master_all[master_all["معرّف السائق"] == chosen_id].head(1) if chosen_id is not None else pd.DataFrame()
 
         if len(drow):
             d = drow.iloc[0]
@@ -808,6 +798,10 @@ def page_accounts():
     st.subheader("💰 الحسابات")
     st.info("جاهز — عند تزويدي بملف الحسابات (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
 
+def page_payroll():
+    st.subheader("🧾 مسير الرواتب")
+    st.info("جاهز — عند تزويدي بملف مسير الرواتب (الأعمدة) سأربطه هنا مع بيانات السائقين والإدارة.")
+
 # =========================
 # Render
 # =========================
@@ -826,5 +820,7 @@ elif ROLE == "السيارات / الحركة":
     page_fleet()
 elif ROLE == "الحسابات":
     page_accounts()
+elif ROLE == "مسير الرواتب":
+    page_payroll()
 else:
     st.info("الدور غير معروف.")
