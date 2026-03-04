@@ -788,50 +788,66 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
             hide_index=True
         )
 
-    # =========================
-    # Driver lookup (RESTORED insights)
-    # =========================
-    st.divider()
-    st.subheader("🔎 البحث عن سائق")
+ # =========================
+# Driver lookup (FIXED)
+# =========================
+st.divider()
+st.subheader("🔎 البحث عن سائق")
 
-    dl = master_all.copy()
-    dl["اسم السائق"] = dl["اسم السائق"].astype(str).map(clean_name)
+dl = master_all.copy()
+dl["اسم السائق"] = dl["اسم السائق"].astype(str).map(clean_name)
 
-    # Names list (full list, not filtered by f)
-    driver_names = sorted([n for n in dl["اسم السائق"].dropna().unique().tolist() if n.strip() != ""])
-    selected_name = st.selectbox("اختر السائق", ["(اختر)"] + driver_names, key="lookup_driver_name")
+driver_names = sorted([n for n in dl["اسم السائق"].dropna().unique().tolist() if n.strip() != ""])
+selected_name = st.selectbox("اختر السائق", ["(اختر)"] + driver_names, key="lookup_driver_name")
 
-    if selected_name != "(اختر)":
-        pool = dl[dl["اسم السائق"] == selected_name].copy()
+if selected_name != "(اختر)":
+    pool = dl[dl["اسم السائق"] == selected_name].copy()
+    ids = sorted([int(x) for x in pool["معرّف السائق"].dropna().unique().tolist() if pd.notna(x)])
 
-        # If same name appears with multiple IDs => show an ID selector (low-key)
-        ids = sorted([int(x) for x in pool["معرّف السائق"].dropna().unique().tolist() if pd.notna(x)])
-        selected_id = None
-        if len(ids) > 1:
-            selected_id = st.selectbox("اختر المعرف (لنفس الاسم)", ids, key="lookup_driver_id")
-            pool = pool[pool["معرّف السائق"] == selected_id]
+    selected_id = None
+    if len(ids) > 1:
+        selected_id = st.selectbox("اختر المعرف (لنفس الاسم)", ids, key="lookup_driver_id")
+        pool = pool[pool["معرّف السائق"] == selected_id]
 
-        # pick “best row” to display: if f exists use same driver_id row from f for consistent priority view
-        d = pool.iloc[0]
-        if selected_id is not None and f is not None and len(f):
-            alt = f[f["معرّف السائق"] == selected_id]
-            if len(alt):
-                d = alt.sort_values("أولوية", ascending=False).iloc[0]
+    d = pool.iloc[0]
 
-        # Insights (metrics)
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
-        c2.metric("الطلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce').fillna(0)):,.0f}")
-        c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
+    # if we have f (priority table), prefer that row for the same ID
+    if selected_id is not None and f is not None and len(f):
+        alt = f[f["معرّف السائق"] == selected_id]
+        if len(alt):
+            d = alt.sort_values("أولوية", ascending=False).iloc[0]
 
-        wd = d.get("اعدد ايام العمل")
-        c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
 
-        fr = d.get("FR")
-        c5.metric("FR", "—" if pd.isna(fr) else f"{int(pd.to_numeric(fr, errors='coerce').fillna(0)):,}")
+    c1.metric("معدل توصيل %", pct_str(d.get("معدل توصيل")))
+    c2.metric("الطلبات", f"{int0(d.get('طلبات')):,}")
+    c3.metric("معدل الغاء %", pct_str(d.get("معدل الغاء")))
 
-        vda = d.get("VDA")
-        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(pd.to_numeric(vda, errors='coerce').fillna(0)):,}")
+    wd = d.get("اعدد ايام العمل")
+    c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int0(wd):,}")
+
+    fr = d.get("FR")
+    c5.metric("FR", "—" if pd.isna(fr) else f"{int0(fr):,}")
+
+    vda = d.get("VDA")
+    c6.metric("VDA", "—" if pd.isna(vda) else f"{int0(vda):,}")
+
+    with st.expander("عرض جميع بيانات السائق", expanded=False):
+        show_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل", "FR", "VDA"]
+        show_cols = [c for c in show_cols if c in dl.columns]
+
+        one = pd.DataFrame([{c: d.get(c, None) for c in show_cols}])
+
+        st.dataframe(
+            one.style.format({
+                "معدل توصيل": "{:.2%}",
+                "معدل الغاء": "{:.2%}",
+                "طلبات": "{:,.0f}",
+                "المهام المرفوضة": "{:,.0f}",
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
         # Full row preview (clean)
         with st.expander("عرض جميع بيانات السائق", expanded=False):
@@ -896,3 +912,4 @@ elif ROLE == "مسير الرواتب":
     page_payroll()
 else:
     st.info("الدور غير معروف.")
+
