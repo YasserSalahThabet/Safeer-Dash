@@ -19,8 +19,8 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 
 DB_PATH = DATA_DIR / "safeer_hr.db"
 
-LEFT_IMG = ASSETS / "left.jpg"
-RIGHT_IMG = ASSETS / "right.jpg"
+LEFT_IMG = ASSETS / "left.jpg"      # left banner
+RIGHT_IMG = ASSETS / "right.jpg"    # right banner
 LOGO_IMG = ASSETS / "logo.png"
 FAVICON_IMG = ASSETS / "favicon.png"
 
@@ -46,12 +46,14 @@ st.markdown(
     div[data-testid="stFileUploader"] section div span {
         display: none !important;
     }
+
     div[data-testid="stFileUploader"] section {
         border: 0 !important;
         background: transparent !important;
         padding: 0 !important;
         margin: 0 !important;
     }
+
     div[data-testid="stFileUploader"] button {
         width: 100% !important;
         border-radius: 12px !important;
@@ -61,6 +63,7 @@ st.markdown(
         color: transparent !important;
         position: relative;
     }
+
     div[data-testid="stFileUploader"] button::after {
         content: "📁 تحميل ملفات";
         color: white;
@@ -70,27 +73,23 @@ st.markdown(
         transform: translate(-50%, -50%);
         white-space: nowrap;
     }
-    div[data-testid="stFileUploader"] ul { display: none !important; }
+
+    /* Hide file list under uploader */
+    div[data-testid="stFileUploader"] ul {
+        display: none !important;
+    }
 
     /* Small polish */
     .block-container { padding-top: 1rem; }
-    div[data-testid="stMetric"] { background: rgba(255,255,255,0.02); padding: 8px; border-radius: 12px; }
-    div[data-testid="stMetricValue"] { font-size: 16px !important; } /* slightly smaller */
+    div[data-testid="stMetric"] {
+        background: rgba(255,255,255,0.02);
+        padding: 8px;
+        border-radius: 12px;
+    }
+    div[data-testid="stMetricValue"] { font-size: 19px !important; }
     div[data-testid="stMetricLabel"] { font-size: 11px !important; opacity: 0.8; }
     .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
-
-    .ann-box {
-        padding: 10px 12px;
-        border-radius: 10px;
-        background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.06);
-        margin-bottom: 8px;
-    }
-    .ann-meta {
-        font-size: 11px;
-        opacity: 0.75;
-        margin-top: 4px;
-    }
+    .muted { opacity: 0.75; font-size: 12px; }
     </style>
     """,
     unsafe_allow_html=True
@@ -126,11 +125,13 @@ ROLES = {
     "الحسابات": "accounts_password",
     "مسير الرواتب": "payroll_password",
 }
-FALLBACK_PASSWORD = "12345"
 
-def get_secret(key: str, default: str = "") -> str:
+def get_secret(key: str, default: str = "12345") -> str:
+    """
+    Fix password issues: if secrets not set, fallback to 12345 (your requirement).
+    """
     try:
-        return st.secrets["auth"][key]
+        return str(st.secrets["auth"][key])
     except Exception:
         return default
 
@@ -146,6 +147,7 @@ def require_login():
         st.markdown("## تسجيل الدخول")
         role = st.selectbox("الدور", list(ROLES.keys()))
         pwd = st.text_input("كلمة المرور", type="password")
+
         col1, col2 = st.columns(2)
         login = col1.button("دخول")
         logout = col2.button("خروج")
@@ -156,9 +158,8 @@ def require_login():
             st.rerun()
 
         if login:
-            expected = get_secret(ROLES[role], "")
-            ok = (expected and pwd == expected) or ((not expected) and pwd == FALLBACK_PASSWORD)
-            if ok:
+            expected = get_secret(ROLES[role], "12345")
+            if str(pwd) == str(expected):
                 st.session_state.logged_in = True
                 st.session_state.role = role
                 st.rerun()
@@ -173,7 +174,7 @@ require_login()
 ROLE = st.session_state.role
 
 # =========================
-# Sidebar: uploader + filters ONLY
+# Sidebar: uploader + filters ONLY (no menu)
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
@@ -186,19 +187,19 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
-    if "excluded_files" not in st.session_state:
-        st.session_state.excluded_files = set()
-
+    # Low-key list of uploaded files + ability to ignore (remove from reading)
+    active_names = None
     if uploaded_files:
-        with st.expander("📄 الملفات المستخدمة (إلغاء تفعيل ملف)", expanded=False):
-            for uf in uploaded_files:
-                n = uf.name
-                checked = (n not in st.session_state.excluded_files)
-                new_checked = st.checkbox(n, value=checked, key=f"use_{n}")
-                if new_checked:
-                    st.session_state.excluded_files.discard(n)
-                else:
-                    st.session_state.excluded_files.add(n)
+        with st.expander("📄 الملفات المستخدمة", expanded=False):
+            names = [f.name for f in uploaded_files]
+            default = names
+            active_names = st.multiselect(
+                "اختر الملفات التي تريد أن يقرأ منها النظام",
+                options=names,
+                default=default,
+                label_visibility="collapsed"
+            )
+            st.markdown('<div class="muted">قم بإزالة علامة الملف غير المطلوب.</div>', unsafe_allow_html=True)
 
     st.divider()
     search = st.text_input("بحث (المعرف / الاسم)", "")
@@ -208,103 +209,107 @@ with st.sidebar:
 # =========================
 # SQLite
 # =========================
+def db_conn():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
 def now_ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def db_conn():
-    con = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
-    cur = con.cursor()
-    cur.execute("PRAGMA journal_mode=WAL;")
-    cur.execute("PRAGMA synchronous=NORMAL;")
-    con.commit()
-    return con
-
-def table_exists(con, name: str) -> bool:
-    cur = con.cursor()
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
-    return cur.fetchone() is not None
-
-def get_table_columns(con, name: str) -> list[str]:
-    cur = con.cursor()
-    cur.execute(f"PRAGMA table_info({name})")
-    rows = cur.fetchall()
-    return [r[1] for r in rows]
-
-def migrate_announcements_table():
-    con = db_conn()
-    cur = con.cursor()
-
-    if not table_exists(con, "announcements"):
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS announcements (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                created_by_role TEXT NOT NULL,
-                body TEXT NOT NULL
-            )
-        """)
-        con.commit()
-        con.close()
-        return
-
-    cols = get_table_columns(con, "announcements")
-    if "body" in cols and "created_at" in cols and "created_by_role" in cols:
-        con.close()
-        return
-
-    msg_col = None
-    if "body" in cols:
-        msg_col = "body"
-    elif "message" in cols:
-        msg_col = "message"
-    elif "text" in cols:
-        msg_col = "text"
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS announcements_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL,
-            created_by_role TEXT NOT NULL,
-            body TEXT NOT NULL
-        )
-    """)
-
-    if msg_col and ("created_at" in cols) and ("created_by_role" in cols):
-        cur.execute(f"""
-            INSERT INTO announcements_new (created_at, created_by_role, body)
-            SELECT
-                COALESCE(created_at, ''),
-                COALESCE(created_by_role, ''),
-                COALESCE({msg_col}, '')
-            FROM announcements
-        """)
-
-    cur.execute("DROP TABLE IF EXISTS announcements")
-    cur.execute("ALTER TABLE announcements_new RENAME TO announcements")
-
-    con.commit()
-    con.close()
 
 def init_db():
     con = db_conn()
     cur = con.cursor()
+
+    # drivers registry (minimal, stable)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS drivers (
         driver_id INTEGER PRIMARY KEY,
         driver_name TEXT,
-        user_id TEXT,
-        start_date TEXT,
         status TEXT DEFAULT 'نشط',
-        notes TEXT,
         created_at TEXT,
         updated_at TEXT
     )
     """)
+
+    # announcements: handle old schema problems (message/body)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        created_by_role TEXT NOT NULL,
+        message TEXT,
+        body TEXT
+    )
+    """)
+
     con.commit()
     con.close()
 
 init_db()
-migrate_announcements_table()
+
+def ensure_announcements_columns():
+    """
+    Fix NOT NULL / missing column issues caused by older table schemas.
+    We keep both 'message' and 'body' and always write to both.
+    """
+    con = db_conn()
+    cur = con.cursor()
+    cols = cur.execute("PRAGMA table_info(announcements)").fetchall()
+    col_names = {c[1] for c in cols}
+
+    if "message" not in col_names:
+        try:
+            cur.execute("ALTER TABLE announcements ADD COLUMN message TEXT")
+        except Exception:
+            pass
+
+    if "body" not in col_names:
+        try:
+            cur.execute("ALTER TABLE announcements ADD COLUMN body TEXT")
+        except Exception:
+            pass
+
+    con.commit()
+    con.close()
+
+ensure_announcements_columns()
+
+def add_announcement(msg: str, created_by_role: str):
+    msg = (msg or "").strip()
+    if not msg:
+        return
+
+    ensure_announcements_columns()
+    con = db_conn()
+    cur = con.cursor()
+
+    # write to BOTH columns to satisfy any NOT NULL constraints on older deployments
+    cur.execute(
+        "INSERT INTO announcements (created_at, created_by_role, message, body) VALUES (?, ?, ?, ?)",
+        (now_ts(), str(created_by_role), msg, msg)
+    )
+
+    con.commit()
+    con.close()
+
+def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
+    ensure_announcements_columns()
+    con = db_conn()
+    # coalesce in case one of them is used
+    df = pd.read_sql_query(
+        """
+        SELECT
+            created_at,
+            created_by_role,
+            COALESCE(message, body) AS message
+        FROM announcements
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        con,
+        params=(int(limit),)
+    )
+    con.close()
+    return df
 
 def upsert_driver(driver_id: int, driver_name: str = None):
     con = db_conn()
@@ -313,99 +318,84 @@ def upsert_driver(driver_id: int, driver_name: str = None):
     row = cur.fetchone()
 
     if row is None:
-        cur.execute("""
-            INSERT INTO drivers (driver_id, driver_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        """, (int(driver_id), driver_name or "", now_ts(), now_ts()))
+        cur.execute(
+            "INSERT INTO drivers (driver_id, driver_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (int(driver_id), (driver_name or "").strip(), now_ts(), now_ts())
+        )
     else:
-        existing_name = row[1] or ""
-        new_name = existing_name if (driver_name is None or str(driver_name).strip() == "") else str(driver_name).strip()
-        cur.execute("""
-            UPDATE drivers
-            SET driver_name=?, updated_at=?
-            WHERE driver_id=?
-        """, (new_name, now_ts(), int(driver_id)))
+        existing_name = (row[1] or "").strip()
+        new_name = existing_name
+        if driver_name is not None and str(driver_name).strip():
+            new_name = str(driver_name).strip()
+        cur.execute(
+            "UPDATE drivers SET driver_name=?, updated_at=? WHERE driver_id=?",
+            (new_name, now_ts(), int(driver_id))
+        )
 
     con.commit()
     con.close()
 
 def get_hr_registry() -> pd.DataFrame:
     con = db_conn()
-    df = pd.read_sql_query("""
-        SELECT
-            d.driver_id AS معرف_السائق,
-            d.driver_name AS اسم_السائق,
-            d.status AS الحالة,
-            d.created_at AS تاريخ_الإضافة
-        FROM drivers d
-        ORDER BY d.driver_id
-    """, con)
-    con.close()
-    return df
-
-def add_announcement(message: str, created_by_role: str):
-    migrate_announcements_table()
-    msg = (message or "").strip()
-    if not msg:
-        return
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute(
-        "INSERT INTO announcements (created_at, created_by_role, body) VALUES (?, ?, ?)",
-        (now_ts(), str(created_by_role), msg)
-    )
-    con.commit()
-    con.close()
-
-def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
-    migrate_announcements_table()
-    con = db_conn()
     df = pd.read_sql_query(
-        "SELECT created_at, created_by_role, body FROM announcements ORDER BY id DESC LIMIT ?",
-        con,
-        params=(int(limit),)
+        """
+        SELECT
+            driver_id AS معرف_السائق,
+            driver_name AS اسم_السائق,
+            status AS الحالة,
+            created_at AS تاريخ_الإضافة
+        FROM drivers
+        ORDER BY driver_id
+        """,
+        con
     )
     con.close()
     return df
 
 # =========================
-# Name normalization
+# Announcements UI (low key, for all users)
 # =========================
-def clean_name(s: str) -> str:
-    s = "" if s is None else str(s)
-    s = s.replace("\u00A0", " ")
-    s = " ".join(s.split())  # one space between first/last
-    return s.strip()
+with st.sidebar:
+    st.divider()
+    with st.expander("📢 إعلان", expanded=False):
+        ann_df = get_latest_announcements(limit=3)
+        if len(ann_df):
+            for _, r in ann_df.iterrows():
+                st.caption(f"{r['created_at']} — {r['created_by_role']}")
+                st.write(r["message"])
+                st.markdown("---")
+        else:
+            st.caption("لا توجد إعلانات بعد.")
+
+        ann_text = st.text_area("إرسال إعلان", placeholder="اكتب الإعلان هنا...", label_visibility="collapsed", height=80)
+        if st.button("إرسال", use_container_width=True):
+            add_announcement(ann_text, ROLE)
+            st.rerun()
 
 # =========================
 # Excel helpers
 # =========================
-def normalize_col(c: str) -> str:
+def normalize_col(c) -> str:
     return str(c).strip()
 
 @st.cache_data(show_spinner=False)
 def read_excel_smart(file_bytes: bytes) -> pd.DataFrame:
+    """
+    Reads first sheet.
+    If headers look broken (like values), we also keep header=None version available later.
+    """
     bio = BytesIO(file_bytes)
     xls = pd.ExcelFile(bio)
     sheet = xls.sheet_names[0]
-
-    bio1 = BytesIO(file_bytes)
-    df = pd.read_excel(bio1, sheet_name=sheet, header=0)
+    df = pd.read_excel(bio, sheet_name=sheet, header=0)
     df.columns = [normalize_col(c) for c in df.columns]
+    return df
 
-    suspicious = False
-    if len(df.columns) > 0:
-        c0 = str(df.columns[0]).strip()
-        if c0.lower() in ["makkah", "riyadh", "jeddah", "medina"] or c0.isdigit():
-            suspicious = True
-        if any(str(c).startswith("NULL") or str(c).startswith("0.") for c in df.columns[:15]):
-            suspicious = True
-
-    if suspicious:
-        bio2 = BytesIO(file_bytes)
-        df2 = pd.read_excel(bio2, sheet_name=sheet, header=None)
-        return df2
-
+def read_excel_no_header(file_bytes: bytes) -> pd.DataFrame:
+    bio = BytesIO(file_bytes)
+    xls = pd.ExcelFile(bio)
+    sheet = xls.sheet_names[0]
+    df = pd.read_excel(bio, sheet_name=sheet, header=None)
     return df
 
 def safe_to_numeric(s):
@@ -418,95 +408,68 @@ def pick(df_cols, candidates):
             return cand
     return None
 
+def clean_name(first: str, last: str) -> str:
+    """
+    Fix: ALWAYS ensure a space between first and last.
+    Also collapses multiple spaces.
+    """
+    f = ("" if first is None else str(first)).strip()
+    l = ("" if last is None else str(last)).strip()
+    full = f"{f} {l}".strip()
+    full = " ".join(full.split())
+    return full
+
+def looks_like_bad_headers(cols: list[str]) -> bool:
+    """
+    Heuristic: if many 'columns' are numeric-like or NULL-like, it's not real headers.
+    """
+    if not cols:
+        return True
+    bad = 0
+    for c in cols[:30]:
+        s = str(c).strip()
+        if s.upper().startswith("NULL"):
+            bad += 1
+            continue
+        # numeric-like headers
+        try:
+            float(s)
+            bad += 1
+        except Exception:
+            pass
+        # very long integer IDs
+        if s.isdigit() and len(s) >= 10:
+            bad += 1
+    return (bad / min(len(cols), 30)) >= 0.5
+
 # =========================
 # RULES / TARGETS
 # =========================
-CANCEL_ALERT_THRESHOLD = 0.002  # 0.20%
+CANCEL_ALERT_THRESHOLD = 0.002   # 0.20% (alert if >=)
 ORDERS_TARGET_MONTH = 450
 
 # =========================
-# Column mapping
+# Column mapping (Performance)
 # =========================
 PERF_COLS = {
     "driver_id": ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"],
     "first_name": ["اسم السائق", "First Name", "first_name"],
     "last_name": ["اسم السائق.1", "Last Name", "last_name"],
+
     "delivery_rate": ["معدل اكتمال الطلبات (غير متعلق بالتوصيل)", "معدل التوصيل", "معدل توصيل", "Delivery_Rate", "delivery_rate"],
     "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل الغاء", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
     "orders_delivered": ["المهام التي تم تسليمها", "طلبات", "الطلبات", "الطلبات المسلمة", "Orders_Delivered", "orders_delivered"],
     "reject_total": ["المهام المرفوضة", "المهام المرفوضة (السائق)", "رفض السائق", "Driver Rejections", "driver_rejections"],
-    "work_days": ["اعدد ايام العمل", "عدد ايام العمل", "أيام العمل"],
-    "fr": ["FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "FaceRecognition"],
-    "vda": ["VDA", "vda", "مؤشر VDA", "VDA Score", "vda_score"],
+
+    "work_days": ["اعدد ايام العمل", "عدد ايام العمل", "أيام العمل", "Work Days", "work_days", "days_worked"],
+
+    "fr": ["FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "face_recognition"],
+    "vda": ["VDA", "vda", "مؤشر VDA", "مؤشر_إضافي"],
 }
 
-def _normalize_percent_series(s: pd.Series) -> pd.Series:
-    s = pd.to_numeric(s, errors="coerce").fillna(0)
-    if s.max() > 1.5:
-        s = s / 100.0
-    return s.clip(0, 1)
-
-# =========================
-# Detect file types
-# =========================
-def detect_file_type(df: pd.DataFrame) -> str:
-    # performance file with broken headers (int columns)
-    if all(isinstance(c, int) for c in df.columns):
-        return "performance"
-
-    cols = set(map(str, df.columns))
-
-    # FR/VDA-only file signals
-    frvda_signals = {"FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "VDA", "مؤشر VDA", "vda_score"}
-    id_signals = {"معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"}
-
-    perf_signals = {"معدل الغاء", "معدل توصيل", "معدل الإلغاء بسبب مشاكل التوصيل", "معدل التوصيل", "طلبات", "المهام المرفوضة"}
-
-    frvda_hits = len(cols.intersection(frvda_signals))
-    id_hits = len(cols.intersection(id_signals))
-    perf_hits = len(cols.intersection(perf_signals))
-
-    # If it has FR/VDA + Driver ID but NOT performance metrics => treat as FRVDA-only
-    if frvda_hits >= 1 and id_hits >= 1 and perf_hits < 2:
-        return "frvda"
-
-    # Performance
-    if perf_hits >= 2 and id_hits >= 1:
-        return "performance"
-
-    return "unknown"
-
-# =========================
-# Build Performance Report
-# =========================
 def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
-    # headerless performance fallback
-    if all(isinstance(c, int) for c in df_raw.columns):
-        driver_id = safe_to_numeric(df_raw.iloc[:, 6]).astype("Int64")
-        driver_name = df_raw.iloc[:, 3].astype(str).map(clean_name)
-
-        total_orders = safe_to_numeric(df_raw.iloc[:, 11]).fillna(0)
-        delivered = safe_to_numeric(df_raw.iloc[:, 12]).fillna(0)
-        rejections = safe_to_numeric(df_raw.iloc[:, 10]).fillna(0)
-
-        delivery_rate = (delivered / total_orders.replace(0, pd.NA)).fillna(0).clip(0, 1)
-        cancel_rate = ((total_orders - delivered) / total_orders.replace(0, pd.NA)).fillna(0).clip(0, 1)
-
-        out = pd.DataFrame({
-            "معرّف السائق": driver_id,
-            "اسم السائق": driver_name,
-            "معدل توصيل": delivery_rate,
-            "معدل الغاء": cancel_rate,
-            "طلبات": delivered,
-            "المهام المرفوضة": rejections,
-            "اعدد ايام العمل": pd.NA,
-            "FR": pd.NA,
-            "VDA": pd.NA,
-        })
-        out["اسم السائق"] = out["اسم السائق"].map(clean_name)
-        return out
-
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
+
     required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
     missing = [k for k in required if not mapped.get(k)]
     if missing:
@@ -515,13 +478,15 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
         st.write(list(df_raw.columns))
         st.stop()
 
-    first = df_raw[mapped["first_name"]].astype(str).str.strip().fillna("")
-    last = df_raw[mapped["last_name"]].astype(str).str.strip().fillna("")
-    driver_name = (first + " " + last).str.replace(r"\s+", " ", regex=True).str.strip().map(clean_name)
+    driver_name = [
+        clean_name(fn, ln)
+        for fn, ln in zip(df_raw[mapped["first_name"]], df_raw[mapped["last_name"]])
+    ]
 
     out = pd.DataFrame({
         "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
-        "اسم السائق": driver_name,
+        "اسم السائق": pd.Series(driver_name, dtype="string"),
+
         "معدل توصيل": safe_to_numeric(df_raw[mapped["delivery_rate"]]),
         "معدل الغاء": safe_to_numeric(df_raw[mapped["cancel_rate"]]),
         "طلبات": safe_to_numeric(df_raw[mapped["orders_delivered"]]),
@@ -529,97 +494,155 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     })
 
     out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
-    out["معدل توصيل"] = _normalize_percent_series(out["معدل توصيل"])
-    out["معدل الغاء"] = _normalize_percent_series(out["معدل الغاء"])
-    out["طلبات"] = pd.to_numeric(out["طلبات"], errors="coerce").fillna(0)
-    out["المهام المرفوضة"] = pd.to_numeric(out["المهام المرفوضة"], errors="coerce").fillna(0)
+    out["معدل توصيل"] = out["معدل توصيل"].fillna(0).clip(0, 1)
+    out["معدل الغاء"] = out["معدل الغاء"].fillna(0).clip(0, 1)
+    out["طلبات"] = out["طلبات"].fillna(0)
+    out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
 
     if mapped.get("work_days") and mapped["work_days"] in df_raw.columns:
         out["اعدد ايام العمل"] = safe_to_numeric(df_raw[mapped["work_days"]]).fillna(0)
     else:
         out["اعدد ايام العمل"] = pd.NA
 
-    # keep placeholders for merge
-    out["FR"] = pd.NA
-    out["VDA"] = pd.NA
+    # optional direct FR/VDA if present in performance file
+    if mapped.get("fr") and mapped["fr"] in df_raw.columns:
+        out["FR"] = safe_to_numeric(df_raw[mapped["fr"]]).fillna(0)
+    else:
+        out["FR"] = pd.NA
+
+    if mapped.get("vda") and mapped["vda"] in df_raw.columns:
+        out["VDA"] = safe_to_numeric(df_raw[mapped["vda"]]).fillna(0)
+    else:
+        out["VDA"] = pd.NA
 
     return out
 
-# =========================
-# Extract FR/VDA only file
-# =========================
-def extract_frvda(df_raw: pd.DataFrame) -> pd.DataFrame | None:
-    # We ONLY accept FR/VDA if we can find driver_id column.
-    if all(isinstance(c, int) for c in df_raw.columns):
-        # This format is unknown for FR/VDA headerless, skip safely.
+def extract_fr_vda_from_headerless_company_file(df_no_header: pd.DataFrame) -> pd.DataFrame | None:
+    """
+    Supports the 'Company CHARKA...' style file (no headers).
+    Based on observed layout:
+      - driver_id is column 6
+      - FR is column 8 (0/1)
+      - VDA is column 9 (0..10-ish)
+    If it doesn't match, return None.
+    """
+    if df_no_header is None or df_no_header.shape[1] < 10:
         return None
 
-    id_col = pick(df_raw.columns, PERF_COLS["driver_id"])
-    if not id_col:
+    # basic sanity: column 6 should look like big numeric IDs
+    did = pd.to_numeric(df_no_header.iloc[:, 6], errors="coerce")
+    if did.notna().mean() < 0.6:
         return None
 
-    fr_col = pick(df_raw.columns, PERF_COLS["fr"])
-    vda_col = pick(df_raw.columns, PERF_COLS["vda"])
-
-    if not fr_col and not vda_col:
-        return None
+    fr = pd.to_numeric(df_no_header.iloc[:, 8], errors="coerce")
+    vda = pd.to_numeric(df_no_header.iloc[:, 9], errors="coerce")
 
     out = pd.DataFrame({
-        "معرّف السائق": pd.to_numeric(df_raw[id_col], errors="coerce").astype("Int64")
-    })
+        "معرّف السائق": did.astype("Int64"),
+        "FR": fr,
+        "VDA": vda
+    }).dropna(subset=["معرّف السائق"])
 
-    if fr_col:
-        out["FR"] = pd.to_numeric(df_raw[fr_col], errors="coerce")
-    if vda_col:
-        out["VDA"] = pd.to_numeric(df_raw[vda_col], errors="coerce")
+    # Keep last record per driver_id if duplicates
+    out = out.sort_values(["معرّف السائق"]).drop_duplicates("معرّف السائق", keep="last")
 
-    out = out.dropna(subset=["معرّف السائق"]).drop_duplicates("معرّف السائق")
     return out
+
+def detect_file_kind(file_bytes: bytes) -> str:
+    """
+    Detects:
+      - performance (must have real headers)
+      - frvda_company (headerless company export)
+      - unknown
+    """
+    df = read_excel_smart(file_bytes)
+    cols = list(df.columns)
+
+    # performance signals
+    perf_signals = {
+        "معرّف السائق", "معرف السائق", "اسم السائق", "اسم السائق.1",
+        "معدل الإلغاء بسبب مشاكل التوصيل", "معدل الغاء", "معدل توصيل",
+        "المهام التي تم تسليمها", "طلبات", "المهام المرفوضة", "المهام المرفوضة (السائق)",
+    }
+    perf_hits = len(perf_signals.intersection(set(cols)))
+
+    if perf_hits >= 4 and (not looks_like_bad_headers(cols)):
+        return "performance"
+
+    # headerless FR/VDA company file detection
+    if looks_like_bad_headers(cols):
+        dfh = read_excel_no_header(file_bytes)
+        extracted = extract_fr_vda_from_headerless_company_file(dfh)
+        if extracted is not None and len(extracted):
+            return "frvda_company"
+
+    return "unknown"
 
 # =========================
 # Styling
 # =========================
-def style_attention_table(df):
-    sty = df.style.format({
+def style_attention_table(df: pd.DataFrame):
+    """
+    Fix: integers should not show trailing zeros.
+    """
+    fmt = {
         "معدل توصيل": "{:.2%}",
         "معدل الغاء": "{:.2%}",
         "طلبات": "{:,.0f}",
         "المهام المرفوضة": "{:,.0f}",
-    })
-    sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) >= CANCEL_ALERT_THRESHOLD else "", subset=["معدل الغاء"])
-    sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) < 1.0 else "", subset=["معدل توصيل"])
-    sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) < ORDERS_TARGET_MONTH else "", subset=["طلبات"])
-    sty = sty.applymap(lambda x: "color:red;font-weight:900;" if float(x) > 0 else "", subset=["المهام المرفوضة"])
+    }
+    sty = df.style.format(fmt)
+
+    # cancel is bad if HIGH (>= 0.20%)
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) >= CANCEL_ALERT_THRESHOLD else "",
+        subset=["معدل الغاء"]
+    )
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) < 1.0 else "",
+        subset=["معدل توصيل"]
+    )
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) < ORDERS_TARGET_MONTH else "",
+        subset=["طلبات"]
+    )
+    sty = sty.applymap(
+        lambda x: "color:red;font-weight:900;" if float(x) > 0 else "",
+        subset=["المهام المرفوضة"]
+    )
     return sty
 
 # =========================
-# Build datasets from uploads
+# Build master from uploads
 # =========================
-def build_datasets_from_uploads():
+def build_master_from_uploads():
     if not uploaded_files:
         return None, None
 
-    effective_files = [f for f in uploaded_files if f.name not in st.session_state.excluded_files]
-    if not effective_files:
+    # filter which files are active
+    files_in = uploaded_files
+    if active_names is not None:
+        files_in = [f for f in uploaded_files if f.name in set(active_names)]
+
+    if not files_in:
         return None, None
 
-    items = []
-    for uf in effective_files:
+    file_items = []
+    for uf in files_in:
         b = uf.getvalue()
-        df = read_excel_smart(b)
-        kind = detect_file_type(df)
-        items.append({"name": uf.name, "df": df, "kind": kind})
+        kind = detect_file_kind(b)
+        file_items.append({"name": uf.name, "bytes": b, "kind": kind})
 
-    # pick performance file
-    perf_item = next((x for x in items if x["kind"] == "performance"), None)
+    # choose performance file (required for master)
+    perf_item = next((x for x in file_items if x["kind"] == "performance"), None)
     if perf_item is None:
-        # no performance => cannot compute performance tables, but allow app to run
-        st.warning("لم يتم العثور على ملف أداء. (ملف FR/VDA لوحده لا يكفي لعرض الأداء).")
-        return None, None
+        # if none is detected, try first file as performance and let build_performance_report show error
+        perf_item = file_items[0]
 
-    perf = build_performance_report(perf_item["df"])
+    df_perf = read_excel_smart(perf_item["bytes"])
+    perf = build_performance_report(df_perf)
 
-    # Save names to DB
+    # Save driver names to DB
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
         name = r.get("اسم السائق")
@@ -627,57 +650,83 @@ def build_datasets_from_uploads():
             continue
         upsert_driver(int(did), driver_name=str(name).strip())
 
-    master_all = perf.copy()
+    master = perf.copy()
 
-    # Merge FR/VDA from ANY frvda file(s) (including your Company CHARKA format)
-    frvda_items = [x for x in items if x["kind"] == "frvda"]
-    for it in frvda_items:
-        frvda_df = extract_frvda(it["df"])
-        if frvda_df is None or len(frvda_df) == 0:
+    # Merge FR/VDA from additional files (including the "Company CHARKA..." format)
+    for item in file_items:
+        if item["name"] == perf_item["name"]:
             continue
-        master_all = master_all.merge(frvda_df, on="معرّف السائق", how="left", suffixes=("", "_new"))
-        # prefer new if exists
-        if "FR_new" in master_all.columns:
-            master_all["FR"] = master_all["FR_new"].combine_first(master_all["FR"])
-            master_all.drop(columns=["FR_new"], inplace=True)
-        if "VDA_new" in master_all.columns:
-            master_all["VDA"] = master_all["VDA_new"].combine_first(master_all["VDA"])
-            master_all.drop(columns=["VDA_new"], inplace=True)
 
-    # Clean names again + ensure space between first/last
-    master_all["اسم السائق"] = master_all["اسم السائق"].astype(str).map(clean_name)
+        if item["kind"] == "frvda_company":
+            dfh = read_excel_no_header(item["bytes"])
+            extra = extract_fr_vda_from_headerless_company_file(dfh)
+            if extra is not None and len(extra):
+                master = master.merge(extra, on="معرّف السائق", how="left", suffixes=("", "_x"))
+            continue
 
-    # Filters for f
-    f = master_all.copy()
+        # otherwise attempt normal header-based FR/VDA merge
+        df_other = read_excel_smart(item["bytes"])
+        id_col = pick(df_other.columns, PERF_COLS["driver_id"])
+        if not id_col:
+            continue
 
+        df_id = pd.to_numeric(df_other[id_col], errors="coerce").astype("Int64")
+
+        fr_col = pick(df_other.columns, PERF_COLS["fr"])
+        vda_col = pick(df_other.columns, PERF_COLS["vda"])
+
+        if not fr_col and not vda_col:
+            continue
+
+        temp = pd.DataFrame({"معرّف السائق": df_id})
+        if fr_col:
+            temp["FR"] = safe_to_numeric(df_other[fr_col])
+        if vda_col:
+            temp["VDA"] = safe_to_numeric(df_other[vda_col])
+
+        temp = temp.dropna(subset=["معرّف السائق"]).drop_duplicates("معرّف السائق", keep="last")
+        master = master.merge(temp, on="معرّف السائق", how="left", suffixes=("", "_x"))
+
+    # clean up possible duplicate merge columns
+    for c in ["FR_x", "VDA_x"]:
+        if c in master.columns:
+            master.drop(columns=[c], inplace=True)
+
+    if "FR" in master.columns:
+        master["FR"] = pd.to_numeric(master["FR"], errors="coerce").fillna(0)
+    if "VDA" in master.columns:
+        master["VDA"] = pd.to_numeric(master["VDA"], errors="coerce").fillna(0)
+
+    f = master.copy()
+
+    # Filters
     if search.strip():
         s = search.strip().lower()
         f = f[
             f["اسم السائق"].astype(str).str.lower().str.contains(s, na=False)
             | f["معرّف السائق"].astype(str).str.contains(s, na=False)
         ]
-
     f = f[(f["معدل توصيل"] >= min_delivery)]
     f = f[(f["معدل الغاء"] <= max_cancel)]
 
-    # Alerts
+    # Alerts: cancel is bad if HIGH
     f["تنبيه الغاء"] = (f["معدل الغاء"] >= CANCEL_ALERT_THRESHOLD).astype(int)
     f["تنبيه توصيل"] = (f["معدل توصيل"] < 1.0).astype(int)
-    f["تنبيه طلبات"] = (pd.to_numeric(f["طلبات"], errors="coerce").fillna(0) < ORDERS_TARGET_MONTH).astype(int)
-    f["تنبيه رفض"] = (pd.to_numeric(f["المهام المرفوضة"], errors="coerce").fillna(0) > 0).astype(int)
+    f["تنبيه طلبات"] = (f["طلبات"] < ORDERS_TARGET_MONTH).astype(int)
+    f["تنبيه رفض"] = (f["المهام المرفوضة"] > 0).astype(int)
 
     delivery_gap = (1.0 - f["معدل توصيل"]).clip(lower=0)
     cancel_over = (f["معدل الغاء"] - CANCEL_ALERT_THRESHOLD).clip(lower=0)
-    orders_gap = (ORDERS_TARGET_MONTH - pd.to_numeric(f["طلبات"], errors="coerce").fillna(0)).clip(lower=0)
-    rejects = pd.to_numeric(f["المهام المرفوضة"], errors="coerce").fillna(0)
+    orders_gap = (ORDERS_TARGET_MONTH - f["طلبات"]).clip(lower=0)
 
+    # Priority: cancel dominates
     f["أولوية"] = (
         f["تنبيه الغاء"] * 1_000_000
         + cancel_over * 500_000
         + delivery_gap * 50_000
         + f["تنبيه طلبات"] * 10_000
         + orders_gap * 5
-        + rejects * 200
+        + f["المهام المرفوضة"] * 200
     )
 
     f = f.sort_values(
@@ -687,55 +736,21 @@ def build_datasets_from_uploads():
 
     f["ترتيب المتابعة"] = range(1, len(f) + 1)
 
-    return master_all, f
+    return master, f
 
 # =========================
-# Announcements
-# =========================
-def announcements_block():
-    try:
-        ann = get_latest_announcements(limit=3)
-    except Exception:
-        ann = pd.DataFrame()
-
-    if len(ann):
-        with st.expander("📢 الإعلانات", expanded=True):
-            for _, r in ann.iterrows():
-                st.markdown(
-                    f"""
-                    <div class="ann-box">
-                        <div>{r.get("body","")}</div>
-                        <div class="ann-meta">{r.get("created_at","")} — {r.get("created_by_role","")}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-        st.divider()
-
-    with st.sidebar:
-        st.divider()
-        st.markdown("### 📢 إرسال إعلان")
-        with st.form("announcement_form", clear_on_submit=True):
-            msg = st.text_area("اكتب الإعلان", height=80, label_visibility="collapsed", placeholder="اكتب إعلاناً قصيراً...")
-            submitted = st.form_submit_button("إرسال")
-            if submitted:
-                add_announcement(msg, ROLE)
-                st.success("تم إرسال الإعلان ✅")
-                st.rerun()
-
-# =========================
-# Pages
+# Pages (by ROLE only)
 # =========================
 def page_admin(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("📊 الإدارة — نظرة (يومي / شهري)")
-    if master_all is None:
-        st.info("قم بتحميل ملف الأداء لعرض مؤشرات الإدارة.")
+    if f is None:
+        st.info("قم بتحميل ملف/ملفات الأداء لعرض مؤشرات الإدارة.")
         return
 
-    total_drivers = int(master_all["معرّف السائق"].nunique())
-    total_orders = int(pd.to_numeric(master_all["طلبات"], errors="coerce").fillna(0).sum())
-    avg_delivery = float(master_all["معدل توصيل"].mean()) if len(master_all) else 0
-    avg_cancel = float(master_all["معدل الغاء"].mean()) if len(master_all) else 0
+    total_drivers = int(f["معرّف السائق"].nunique())
+    total_orders = int(pd.to_numeric(f["طلبات"], errors="coerce").fillna(0).sum())
+    avg_delivery = float(f["معدل توصيل"].mean()) if len(f) else 0
+    avg_cancel = float(f["معدل الغاء"].mean()) if len(f) else 0
 
     a1, a2, a3, a4 = st.columns(4)
     a1.metric("إجمالي السائقين", f"{total_drivers:,}")
@@ -743,122 +758,104 @@ def page_admin(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     a3.metric("متوسط معدل التوصيل", f"{avg_delivery:.2%}")
     a4.metric("متوسط معدل الإلغاء", f"{avg_cancel:.2%}")
 
-    if f is not None and len(f):
-        st.divider()
-        st.markdown("### 🚨 الأولوية")
-        cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
-        st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
+    st.divider()
+    st.markdown("### 🚨 الأولوية")
+    cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
+    st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("### 📈 توزيع معدل الإلغاء")
+    fig = px.histogram(f, x="معدل الغاء", nbins=30, title="توزيع معدل الإلغاء (معدل الغاء)")
+    st.plotly_chart(fig, use_container_width=True)
 
 def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
-    if master_all is None:
-        st.info("ارفع ملف الأداء للبدء. (ملفات FR/VDA فقط لا تعرض الأداء)")
+    if f is None:
+        st.info("ارفع ملف/ملفات للبدء.")
         return
 
-    # KPI
+    # KPIs
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("عدد السائقين", f"{int(master_all['معرّف السائق'].nunique()):,}")
-    k2.metric("متوسط معدل التوصيل", f"{master_all['معدل توصيل'].mean():.2%}" if len(master_all) else "—")
-    k3.metric("متوسط معدل الإلغاء", f"{master_all['معدل الغاء'].mean():.2%}" if len(master_all) else "—")
-    k4.metric("عدد الطلبات", f"{int(pd.to_numeric(master_all['طلبات'], errors='coerce').fillna(0).sum()):,}" if len(master_all) else "—")
+    k1.metric("عدد السائقين", f"{int(f['معرّف السائق'].nunique()):,}")
+    k2.metric("متوسط معدل التوصيل", f"{f['معدل توصيل'].mean():.2%}" if len(f) else "—")
+    k3.metric("متوسط معدل الإلغاء", f"{f['معدل الغاء'].mean():.2%}" if len(f) else "—")
+    k4.metric("عدد الطلبات", f"{int(pd.to_numeric(f['طلبات'], errors='coerce').fillna(0).sum()):,}" if len(f) else "—")
 
-    # Priority table
-    if f is not None and len(f):
-        st.divider()
-        st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
-        attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
-        st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
+    st.divider()
 
-        st.divider()
-        st.subheader("📋 الجدول النهائي (كامل البيانات)")
-        bottom_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل"]
-        if "FR" in f.columns:
-            bottom_cols.append("FR")
-        if "VDA" in f.columns:
-            bottom_cols.append("VDA")
+    # Attention table
+    st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
+    attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
+    st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
-        st.dataframe(
-            f[bottom_cols].style.format({
-                "معدل توصيل": "{:.2%}",
-                "معدل الغاء": "{:.2%}",
-                "طلبات": "{:,.0f}",
-                "المهام المرفوضة": "{:,.0f}",
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
+    st.divider()
 
- # =========================
-# Driver lookup (FIXED)
-# =========================
-st.divider()
-st.subheader("🔎 البحث عن سائق")
+    # Driver lookup (FIXED: full list + no duplicates + show ID in dropdown)
+    st.subheader("🔎 البحث عن سائق")
+    f_lookup = f.copy()
+    f_lookup["معرّف السائق"] = pd.to_numeric(f_lookup["معرّف السائق"], errors="coerce").astype("Int64")
 
-dl = master_all.copy()
-dl["اسم السائق"] = dl["اسم السائق"].astype(str).map(clean_name)
+    # Make a stable unique list by (name, id)
+    items = (
+        f_lookup[["اسم السائق", "معرّف السائق"]]
+        .dropna(subset=["معرّف السائق"])
+        .drop_duplicates(["اسم السائق", "معرّف السائق"], keep="last")
+        .sort_values(["اسم السائق", "معرّف السائق"])
+    )
 
-driver_names = sorted([n for n in dl["اسم السائق"].dropna().unique().tolist() if n.strip() != ""])
-selected_name = st.selectbox("اختر السائق", ["(اختر)"] + driver_names, key="lookup_driver_name")
+    # label includes BOTH name and id so you don't see one name with different ids without clarity
+    items["label"] = items.apply(lambda r: f"{r['اسم السائق']}  —  ({int(r['معرّف السائق'])})", axis=1)
+    labels = items["label"].tolist()
 
-if selected_name != "(اختر)":
-    pool = dl[dl["اسم السائق"] == selected_name].copy()
-    ids = sorted([int(x) for x in pool["معرّف السائق"].dropna().unique().tolist() if pd.notna(x)])
+    selected_label = st.selectbox("اختر السائق", ["(اختر)"] + labels, key="lookup_driver")
+    if selected_label != "(اختر)":
+        picked = items[items["label"] == selected_label].head(1).iloc[0]
+        did = int(picked["معرّف السائق"])
 
-    selected_id = None
-    if len(ids) > 1:
-        selected_id = st.selectbox("اختر المعرف (لنفس الاسم)", ids, key="lookup_driver_id")
-        pool = pool[pool["معرّف السائق"] == selected_id]
+        row_df = f_lookup[f_lookup["معرّف السائق"].astype("Int64") == did].head(1)
+        if len(row_df) == 0:
+            st.warning("لم يتم العثور على بيانات هذا السائق داخل الملف الحالي.")
+            return
+        d = row_df.iloc[0]
 
-    d = pool.iloc[0]
+        # Metrics (no crashing + correct formatting)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
+        c2.metric("الطلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce') or 0):,}")
+        c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
 
-    # if we have f (priority table), prefer that row for the same ID
-    if selected_id is not None and f is not None and len(f):
-        alt = f[f["معرّف السائق"] == selected_id]
-        if len(alt):
-            d = alt.sort_values("أولوية", ascending=False).iloc[0]
+        wd = d.get("اعدد ايام العمل")
+        c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+        fr = d.get("FR")
+        c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
 
-    c1.metric("معدل توصيل %", pct_str(d.get("معدل توصيل")))
-    c2.metric("الطلبات", f"{int0(d.get('طلبات')):,}")
-    c3.metric("معدل الغاء %", pct_str(d.get("معدل الغاء")))
+        vda = d.get("VDA")
+        c6.metric("VDA", "—" if pd.isna(vda) else f"{float(vda):.2f}" if pd.notna(vda) else "—")
 
-    wd = d.get("اعدد ايام العمل")
-    c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int0(wd):,}")
+    st.divider()
 
-    fr = d.get("FR")
-    c5.metric("FR", "—" if pd.isna(fr) else f"{int0(fr):,}")
+    # Bottom table
+    st.subheader("📋 الجدول النهائي (كامل البيانات)")
+    bottom_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل"]
+    if "FR" in f.columns:
+        bottom_cols.append("FR")
+    if "VDA" in f.columns:
+        bottom_cols.append("VDA")
 
-    vda = d.get("VDA")
-    c6.metric("VDA", "—" if pd.isna(vda) else f"{int0(vda):,}")
+    fmt = {"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}", "طلبات": "{:,.0f}", "المهام المرفوضة": "{:,.0f}"}
+    st.dataframe(
+        f[bottom_cols].style.format(fmt),
+        use_container_width=True,
+        hide_index=True
+    )
 
-    with st.expander("عرض جميع بيانات السائق", expanded=False):
-        show_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل", "FR", "VDA"]
-        show_cols = [c for c in show_cols if c in dl.columns]
-
-        one = pd.DataFrame([{c: d.get(c, None) for c in show_cols}])
-
-        st.dataframe(
-            one.style.format({
-                "معدل توصيل": "{:.2%}",
-                "معدل الغاء": "{:.2%}",
-                "طلبات": "{:,.0f}",
-                "المهام المرفوضة": "{:,.0f}",
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # Full row preview (clean)
-        with st.expander("عرض جميع بيانات السائق", expanded=False):
-            show_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل", "FR", "VDA"]
-            show_cols = [c for c in show_cols if c in dl.columns]
-            one = pd.DataFrame([{c: d.get(c, None) for c in show_cols}])
-            st.dataframe(
-                one.style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}", "طلبات": "{:,.0f}", "المهام المرفوضة": "{:,.0f}"}),
-                use_container_width=True,
-                hide_index=True
-            )
+    st.download_button(
+        "⬇️ تحميل النتائج CSV",
+        data=f.to_csv(index=False, encoding="utf-8-sig"),
+        file_name="safeer_master_filtered.csv",
+        mime="text/csv",
+    )
 
 def page_hr():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
@@ -867,13 +864,9 @@ def page_hr():
 
 def page_supervision(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("🧭 الإشراف")
-    if master_all is None:
-        st.info("ارفع ملف الأداء للبدء.")
+    if f is None:
+        st.info("ارفع ملف/ملفات للبدء.")
         return
-    if f is None or not len(f):
-        st.warning("لا توجد نتائج بعد الفلترة الحالية.")
-        return
-
     st.markdown("### 🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
@@ -888,13 +881,12 @@ def page_accounts():
 
 def page_payroll():
     st.subheader("🧾 مسير الرواتب")
-    st.info("جاهز — عند تزويدي بملف مسير الرواتب (الأعمدة) سأربطه هنا مع بيانات السائقين والإدارة.")
+    st.info("جاهز — عند تزويدي بملف الرواتب (الأعمدة) سأربطه هنا مع الموارد البشرية والحسابات.")
 
 # =========================
-# Render
+# Render (role decides)
 # =========================
-announcements_block()
-master_all, f = build_datasets_from_uploads()
+master_all, f = build_master_from_uploads()
 
 if ROLE == "الإدارة":
     page_admin(master_all, f)
@@ -912,4 +904,3 @@ elif ROLE == "مسير الرواتب":
     page_payroll()
 else:
     st.info("الدور غير معروف.")
-
