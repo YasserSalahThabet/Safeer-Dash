@@ -139,10 +139,6 @@ DEFAULT_PASSWORD_ALL = "12345"
 
 
 def get_secret(key: str, default: str = "") -> str:
-    """
-    Read from st.secrets if available.
-    If secrets are missing, returns default.
-    """
     try:
         return st.secrets["auth"][key]
     except Exception:
@@ -233,7 +229,6 @@ with st.sidebar:
     max_cancel = st.slider("أعلى معدل إلغاء (فلترة)", 0.0, 1.0, 1.0, 0.01)
 
     st.divider()
-    # Central announcements (send + view)
     st.markdown("### 📣 إعلان")
     with st.expander("إرسال إعلان (للجميع)", expanded=False):
         ann_text = st.text_area("نص الإعلان", height=80, placeholder="اكتب إعلان مختصر…")
@@ -241,12 +236,32 @@ with st.sidebar:
 
 
 # =========================
-# SQLite (HR registry + announcements)
+# SQLite helpers
 # =========================
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
+def now_ts():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def table_exists(con, table_name: str) -> bool:
+    cur = con.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+    return cur.fetchone() is not None
+
+
+def table_columns(con, table_name: str) -> set[str]:
+    cur = con.cursor()
+    cur.execute(f"PRAGMA table_info({table_name});")
+    rows = cur.fetchall()
+    return {r[1] for r in rows}  # column name is index 1
+
+
+# =========================
+# DB init + Safe migrations
+# =========================
 def init_db():
     con = db_conn()
     cur = con.cursor()
@@ -265,15 +280,58 @@ def init_db():
     )
     """)
 
-    # Announcements
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS announcements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT,
-        created_by_role TEXT,
-        message TEXT
-    )
-    """)
+    # Announcements: support both schemas safely
+    if not table_exists(con, "announcements"):
+        # create new simple schema
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT,
+            created_by_role TEXT,
+            message TEXT
+        )
+        """)
+    else:
+        cols = table_columns(con, "announcements")
+
+        # If existing table is old schema (title/body/is_active), create a compatible view-table
+        # Strategy: if 'message' missing but 'body' exists -> add 'message' + backfill
+        if "message" not in cols and "body" in cols:
+            try:
+                cur.execute("ALTER TABLE announcements ADD COLUMN message TEXT;")
+            except Exception:
+                pass
+            # backfill message from body
+            try:
+                cur.execute("UPDATE announcements SET message = body WHERE message IS NULL;")
+            except Exception:
+                pass
+
+        # If 'created_by_role' missing but 'created_by' exists, add and backfill
+        cols = table_columns(con, "announcements")
+        if "created_by_role" not in cols and "created_by" in cols:
+            try:
+                cur.execute("ALTER TABLE announcements ADD COLUMN created_by_role TEXT;")
+            except Exception:
+                pass
+            try:
+                cur.execute("UPDATE announcements SET created_by_role = created_by WHERE created_by_role IS NULL;")
+            except Exception:
+                pass
+
+        # If 'created_at' missing but 'uploaded_at' exists, add and backfill
+        cols = table_columns(con, "announcements")
+        if "created_at" not in cols and "uploaded_at" in cols:
+            try:
+                cur.execute("ALTER TABLE announcements ADD COLUMN created_at TEXT;")
+            except Exception:
+                pass
+            try:
+                cur.execute("UPDATE announcements SET created_at = uploaded_at WHERE created_at IS NULL;")
+            except Exception:
+                pass
+
+        # If is_active exists, keep it; we will filter if present
 
     con.commit()
     con.close()
@@ -282,35 +340,9 @@ def init_db():
 init_db()
 
 
-def now_ts():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def add_announcement(message: str, created_by_role: str):
-    message = (message or "").strip()
-    if not message:
-        return
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute(
-        "INSERT INTO announcements (created_at, created_by_role, message) VALUES (?, ?, ?)",
-        (now_ts(), created_by_role, message)
-    )
-    con.commit()
-    con.close()
-
-
-def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
-    con = db_conn()
-    df = pd.read_sql_query(
-        "SELECT created_at, created_by_role, message FROM announcements ORDER BY id DESC LIMIT ?",
-        con,
-        params=(limit,)
-    )
-    con.close()
-    return df
-
-
+# =========================
+# DB operations
+# =========================
 def upsert_driver(driver_id: int, driver_name: str = None):
     con = db_conn()
     cur = con.cursor()
@@ -350,6 +382,82 @@ def get_hr_registry() -> pd.DataFrame:
     return df
 
 
+def add_announcement(message: str, created_by_role: str):
+    message = (message or "").strip()
+    if not message:
+        return
+
+    con = db_conn()
+    cur = con.cursor()
+    cols = table_columns(con, "announcements")
+
+    # Choose best insert based on columns available
+    if {"created_at", "created_by_role", "message"}.issubset(cols):
+        cur.execute(
+            "INSERT INTO announcements (created_at, created_by_role, message) VALUES (?, ?, ?)",
+            (now_ts(), created_by_role, message)
+        )
+    elif {"created_at", "created_by_role", "body"}.issubset(cols):
+        cur.execute(
+            "INSERT INTO announcements (created_at, created_by_role, body) VALUES (?, ?, ?)",
+            (now_ts(), created_by_role, message)
+        )
+    elif {"created_at", "created_by", "body"}.issubset(cols):
+        cur.execute(
+            "INSERT INTO announcements (created_at, created_by, body) VALUES (?, ?, ?)",
+            (now_ts(), created_by_role, message)
+        )
+    else:
+        # last-resort: try generic
+        try:
+            cur.execute(
+                "INSERT INTO announcements (created_at, created_by_role, message) VALUES (?, ?, ?)",
+                (now_ts(), created_by_role, message)
+            )
+        except Exception:
+            # if table is too different, avoid crashing
+            pass
+
+    con.commit()
+    con.close()
+
+
+def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
+    """
+    Defensive reader: supports both schemas and avoids crashing app.
+    """
+    con = db_conn()
+    try:
+        cols = table_columns(con, "announcements")
+
+        where = ""
+        if "is_active" in cols:
+            where = "WHERE is_active = 1"
+
+        if {"created_at", "created_by_role", "message"}.issubset(cols):
+            q = f"SELECT created_at, created_by_role, message FROM announcements {where} ORDER BY id DESC LIMIT ?"
+            df = pd.read_sql_query(q, con, params=(int(limit),))
+            return df
+
+        if {"created_at", "created_by_role", "body"}.issubset(cols):
+            q = f"SELECT created_at, created_by_role, body as message FROM announcements {where} ORDER BY id DESC LIMIT ?"
+            df = pd.read_sql_query(q, con, params=(int(limit),))
+            return df
+
+        if {"created_at", "created_by", "body"}.issubset(cols):
+            q = f"SELECT created_at, created_by as created_by_role, body as message FROM announcements {where} ORDER BY id DESC LIMIT ?"
+            df = pd.read_sql_query(q, con, params=(int(limit),))
+            return df
+
+        # fallback: empty
+        return pd.DataFrame(columns=["created_at", "created_by_role", "message"])
+
+    except Exception:
+        return pd.DataFrame(columns=["created_at", "created_by_role", "message"])
+    finally:
+        con.close()
+
+
 # Handle announcements send (from sidebar)
 if 'send_ann' in locals() and send_ann:
     add_announcement(ann_text, ROLE)
@@ -359,11 +467,14 @@ if 'send_ann' in locals() and send_ann:
 
 # Show announcements on top for ALL users (low-key)
 ann = get_latest_announcements(limit=3)
-if len(ann):
+if ann is not None and len(ann):
     with st.container():
         st.markdown("### 📣 الإعلانات")
         for _, r in ann.iterrows():
-            st.info(f"**{r['created_at']}** — ({r['created_by_role']})\n\n{r['message']}")
+            created_at = str(r.get("created_at", "") or "")
+            by_role = str(r.get("created_by_role", "") or "")
+            msg = str(r.get("message", "") or "")
+            st.info(f"**{created_at}** — ({by_role})\n\n{msg}")
         st.divider()
 
 
@@ -388,13 +499,12 @@ def read_excel_smart(file_bytes: bytes) -> pd.DataFrame:
     df = pd.read_excel(bio, sheet_name=sheet, header=0)
     df.columns = [normalize_col(c) for c in df.columns]
 
-    # Heuristic: if many column names look like numbers / floats / "NULL", treat as no-header format
+    # Heuristic: if many column names look like numbers / floats / NULL, treat as no-header format
     bad = 0
     for c in df.columns:
         s = str(c).strip().lower()
         if s in ("null", "nan") or s.startswith("null"):
             bad += 1
-        # numeric-ish header like "0.1" / "25.1"
         if s.replace(".", "", 1).isdigit():
             bad += 1
 
@@ -447,12 +557,11 @@ def build_performance_report(df_raw: pd.DataFrame, source_name: str = "") -> pd.
     """
     Supports:
       1) Normal Arabic-header template (your usual file)
-      2) Headerless export format (like Company CHARKA...xlsx) -> map by column position
+      2) Headerless export format -> map by column position
     """
 
     # Case A: Normal header template
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
-
     required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
     missing = [k for k in required if not mapped.get(k)]
 
@@ -495,13 +604,7 @@ def build_performance_report(df_raw: pd.DataFrame, source_name: str = "") -> pd.
 
         return out
 
-    # Case B: Headerless format (Company CHARKA... etc.)
-    # We map by position based on what we saw in your file:
-    # col_3  -> driver username/name
-    # col_6  -> driver id (very large integer)
-    # col_12 -> orders delivered (count)
-    # col_10 -> rejections/failed count (small count)
-    # col_11 -> days/period indicator (often 24)
+    # Case B: Headerless format
     if all(str(c).startswith("col_") for c in df_raw.columns) and df_raw.shape[1] >= 13:
         out = pd.DataFrame({
             "معرّف السائق": safe_to_numeric(df_raw["col_6"]),
@@ -519,17 +622,13 @@ def build_performance_report(df_raw: pd.DataFrame, source_name: str = "") -> pd.
         out["طلبات"] = out["طلبات"].fillna(0)
         out["المهام المرفوضة"] = out["المهام المرفوضة"].fillna(0)
         out["اعدد ايام العمل"] = out["اعدد ايام العمل"].fillna(0)
-
-        # keep as percentages display-safe
         out["معدل توصيل"] = pd.to_numeric(out["معدل توصيل"], errors="coerce").fillna(1.0).clip(0, 1)
         out["معدل الغاء"] = pd.to_numeric(out["معدل الغاء"], errors="coerce").fillna(0.0).clip(0, 1)
 
-        # show a subtle note once
-        st.warning("⚠️ تم تحميل ملف بصيغة بدون عناوين (Headerless). بعض الحقول مثل معدل الإلغاء/التوصيل غير موجودة في هذا الملف، وتم التعامل معها بشكل افتراضي.")
+        st.warning("⚠️ تم تحميل ملف بصيغة بدون عناوين. معدل الإلغاء/التوصيل غير موجود في هذا الملف، وتم تعبئته بقيم افتراضية.")
         return out
 
-    # Otherwise: unknown
-    st.error("❌ لم أستطع قراءة هذا الملف كملف أداء. ارفع ملف الأداء الأساسي أو شاركني عناوين الأعمدة.")
+    st.error("❌ لم أستطع قراءة هذا الملف كملف أداء.")
     st.stop()
 
 
@@ -562,7 +661,6 @@ def build_master_from_uploads():
     if not uploaded_files:
         return None
 
-    # apply "ignored files"
     active_files = [f for f in uploaded_files if f.name not in st.session_state.ignored_files]
     if not active_files:
         st.info("كل الملفات الحالية تم تجاهلها. قم بإلغاء تجاهل ملف واحد على الأقل.")
@@ -575,6 +673,7 @@ def build_master_from_uploads():
         kind = detect_file_type(df)
         file_items.append({"name": uf.name, "df": df, "kind": kind})
 
+    # pick first performance-like file
     perf_item = None
     for item in file_items:
         if item["kind"] == "performance":
