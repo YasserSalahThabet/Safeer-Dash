@@ -46,14 +46,12 @@ st.markdown(
     div[data-testid="stFileUploader"] section div span {
         display: none !important;
     }
-
     div[data-testid="stFileUploader"] section {
         border: 0 !important;
         background: transparent !important;
         padding: 0 !important;
         margin: 0 !important;
     }
-
     div[data-testid="stFileUploader"] button {
         width: 100% !important;
         border-radius: 12px !important;
@@ -63,7 +61,6 @@ st.markdown(
         color: transparent !important;
         position: relative;
     }
-
     div[data-testid="stFileUploader"] button::after {
         content: "📁 تحميل ملفات";
         color: white;
@@ -73,19 +70,15 @@ st.markdown(
         transform: translate(-50%, -50%);
         white-space: nowrap;
     }
-
-    div[data-testid="stFileUploader"] ul {
-        display: none !important;
-    }
+    div[data-testid="stFileUploader"] ul { display: none !important; }
 
     /* Small polish */
     .block-container { padding-top: 1rem; }
     div[data-testid="stMetric"] { background: rgba(255,255,255,0.02); padding: 8px; border-radius: 12px; }
-    div[data-testid="stMetricValue"] { font-size: 19px !important; }
+    div[data-testid="stMetricValue"] { font-size: 16px !important; } /* slightly smaller */
     div[data-testid="stMetricLabel"] { font-size: 11px !important; opacity: 0.8; }
     .safeer-subtitle { margin-top: -10px; opacity: 0.85; }
 
-    /* Announcement box */
     .ann-box {
         padding: 10px 12px;
         border-radius: 10px;
@@ -180,7 +173,7 @@ require_login()
 ROLE = st.session_state.role
 
 # =========================
-# Sidebar: uploader + filters ONLY (no menu)
+# Sidebar: uploader + filters ONLY
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
@@ -381,7 +374,7 @@ def get_latest_announcements(limit: int = 3) -> pd.DataFrame:
 def clean_name(s: str) -> str:
     s = "" if s is None else str(s)
     s = s.replace("\u00A0", " ")
-    s = " ".join(s.split())  # ✅ ensures one space between first/last
+    s = " ".join(s.split())  # one space between first/last
     return s.strip()
 
 # =========================
@@ -428,7 +421,7 @@ def pick(df_cols, candidates):
 # =========================
 # RULES / TARGETS
 # =========================
-CANCEL_ALERT_THRESHOLD = 0.002
+CANCEL_ALERT_THRESHOLD = 0.002  # 0.20%
 ORDERS_TARGET_MONTH = 450
 
 # =========================
@@ -443,8 +436,8 @@ PERF_COLS = {
     "orders_delivered": ["المهام التي تم تسليمها", "طلبات", "الطلبات", "الطلبات المسلمة", "Orders_Delivered", "orders_delivered"],
     "reject_total": ["المهام المرفوضة", "المهام المرفوضة (السائق)", "رفض السائق", "Driver Rejections", "driver_rejections"],
     "work_days": ["اعدد ايام العمل", "عدد ايام العمل", "أيام العمل"],
-    "fr": ["FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه"],
-    "vda": ["VDA", "vda", "مؤشر VDA"],
+    "fr": ["FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "FaceRecognition"],
+    "vda": ["VDA", "vda", "مؤشر VDA", "VDA Score", "vda_score"],
 }
 
 def _normalize_percent_series(s: pd.Series) -> pd.Series:
@@ -453,7 +446,41 @@ def _normalize_percent_series(s: pd.Series) -> pd.Series:
         s = s / 100.0
     return s.clip(0, 1)
 
+# =========================
+# Detect file types
+# =========================
+def detect_file_type(df: pd.DataFrame) -> str:
+    # performance file with broken headers (int columns)
+    if all(isinstance(c, int) for c in df.columns):
+        return "performance"
+
+    cols = set(map(str, df.columns))
+
+    # FR/VDA-only file signals
+    frvda_signals = {"FR", "Face Recognition", "Face_Recognition", "التعرف على الوجه", "VDA", "مؤشر VDA", "vda_score"}
+    id_signals = {"معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"}
+
+    perf_signals = {"معدل الغاء", "معدل توصيل", "معدل الإلغاء بسبب مشاكل التوصيل", "معدل التوصيل", "طلبات", "المهام المرفوضة"}
+
+    frvda_hits = len(cols.intersection(frvda_signals))
+    id_hits = len(cols.intersection(id_signals))
+    perf_hits = len(cols.intersection(perf_signals))
+
+    # If it has FR/VDA + Driver ID but NOT performance metrics => treat as FRVDA-only
+    if frvda_hits >= 1 and id_hits >= 1 and perf_hits < 2:
+        return "frvda"
+
+    # Performance
+    if perf_hits >= 2 and id_hits >= 1:
+        return "performance"
+
+    return "unknown"
+
+# =========================
+# Build Performance Report
+# =========================
 def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
+    # headerless performance fallback
     if all(isinstance(c, int) for c in df_raw.columns):
         driver_id = safe_to_numeric(df_raw.iloc[:, 6]).astype("Int64")
         driver_name = df_raw.iloc[:, 3].astype(str).map(clean_name)
@@ -465,7 +492,7 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
         delivery_rate = (delivered / total_orders.replace(0, pd.NA)).fillna(0).clip(0, 1)
         cancel_rate = ((total_orders - delivered) / total_orders.replace(0, pd.NA)).fillna(0).clip(0, 1)
 
-        return pd.DataFrame({
+        out = pd.DataFrame({
             "معرّف السائق": driver_id,
             "اسم السائق": driver_name,
             "معدل توصيل": delivery_rate,
@@ -476,6 +503,8 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
             "FR": pd.NA,
             "VDA": pd.NA,
         })
+        out["اسم السائق"] = out["اسم السائق"].map(clean_name)
+        return out
 
     mapped = {k: pick(df_raw.columns, v) for k, v in PERF_COLS.items()}
     required = ["driver_id", "first_name", "last_name", "delivery_rate", "cancel_rate", "orders_delivered", "reject_total"]
@@ -488,7 +517,7 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     first = df_raw[mapped["first_name"]].astype(str).str.strip().fillna("")
     last = df_raw[mapped["last_name"]].astype(str).str.strip().fillna("")
-    driver_name = (first + " " + last).str.replace(r"\s+", " ", regex=True).str.strip()
+    driver_name = (first + " " + last).str.replace(r"\s+", " ", regex=True).str.strip().map(clean_name)
 
     out = pd.DataFrame({
         "معرّف السائق": safe_to_numeric(df_raw[mapped["driver_id"]]),
@@ -500,7 +529,6 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     })
 
     out["معرّف السائق"] = pd.to_numeric(out["معرّف السائق"], errors="coerce").astype("Int64")
-    out["اسم السائق"] = out["اسم السائق"].astype(str).map(clean_name)
     out["معدل توصيل"] = _normalize_percent_series(out["معدل توصيل"])
     out["معدل الغاء"] = _normalize_percent_series(out["معدل الغاء"])
     out["طلبات"] = pd.to_numeric(out["طلبات"], errors="coerce").fillna(0)
@@ -511,24 +539,42 @@ def build_performance_report(df_raw: pd.DataFrame) -> pd.DataFrame:
     else:
         out["اعدد ايام العمل"] = pd.NA
 
-    if mapped.get("fr") and mapped["fr"] in df_raw.columns:
-        out["FR"] = safe_to_numeric(df_raw[mapped["fr"]]).fillna(0)
-    else:
-        out["FR"] = pd.NA
-
-    if mapped.get("vda") and mapped["vda"] in df_raw.columns:
-        out["VDA"] = safe_to_numeric(df_raw[mapped["vda"]]).fillna(0)
-    else:
-        out["VDA"] = pd.NA
+    # keep placeholders for merge
+    out["FR"] = pd.NA
+    out["VDA"] = pd.NA
 
     return out
 
-def detect_file_type(df: pd.DataFrame) -> str:
-    if all(isinstance(c, int) for c in df.columns):
-        return "performance"
-    perf_signals = {"معرّف السائق", "اسم السائق", "اسم السائق.1", "معدل الغاء", "معدل توصيل", "طلبات", "المهام المرفوضة"}
-    cols = set(map(str, df.columns))
-    return "performance" if len(perf_signals.intersection(cols)) >= 3 else "unknown"
+# =========================
+# Extract FR/VDA only file
+# =========================
+def extract_frvda(df_raw: pd.DataFrame) -> pd.DataFrame | None:
+    # We ONLY accept FR/VDA if we can find driver_id column.
+    if all(isinstance(c, int) for c in df_raw.columns):
+        # This format is unknown for FR/VDA headerless, skip safely.
+        return None
+
+    id_col = pick(df_raw.columns, PERF_COLS["driver_id"])
+    if not id_col:
+        return None
+
+    fr_col = pick(df_raw.columns, PERF_COLS["fr"])
+    vda_col = pick(df_raw.columns, PERF_COLS["vda"])
+
+    if not fr_col and not vda_col:
+        return None
+
+    out = pd.DataFrame({
+        "معرّف السائق": pd.to_numeric(df_raw[id_col], errors="coerce").astype("Int64")
+    })
+
+    if fr_col:
+        out["FR"] = pd.to_numeric(df_raw[fr_col], errors="coerce")
+    if vda_col:
+        out["VDA"] = pd.to_numeric(df_raw[vda_col], errors="coerce")
+
+    out = out.dropna(subset=["معرّف السائق"]).drop_duplicates("معرّف السائق")
+    return out
 
 # =========================
 # Styling
@@ -547,7 +593,7 @@ def style_attention_table(df):
     return sty
 
 # =========================
-# Build datasets
+# Build datasets from uploads
 # =========================
 def build_datasets_from_uploads():
     if not uploaded_files:
@@ -557,19 +603,23 @@ def build_datasets_from_uploads():
     if not effective_files:
         return None, None
 
-    file_items = []
+    items = []
     for uf in effective_files:
         b = uf.getvalue()
         df = read_excel_smart(b)
         kind = detect_file_type(df)
-        file_items.append({"name": uf.name, "df": df, "kind": kind})
+        items.append({"name": uf.name, "df": df, "kind": kind})
 
-    perf_item = next((x for x in file_items if x["kind"] == "performance"), None)
+    # pick performance file
+    perf_item = next((x for x in items if x["kind"] == "performance"), None)
     if perf_item is None:
-        perf_item = file_items[0]
+        # no performance => cannot compute performance tables, but allow app to run
+        st.warning("لم يتم العثور على ملف أداء. (ملف FR/VDA لوحده لا يكفي لعرض الأداء).")
+        return None, None
 
     perf = build_performance_report(perf_item["df"])
 
+    # Save names to DB
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
         name = r.get("اسم السائق")
@@ -578,7 +628,27 @@ def build_datasets_from_uploads():
         upsert_driver(int(did), driver_name=str(name).strip())
 
     master_all = perf.copy()
-    f = perf.copy()
+
+    # Merge FR/VDA from ANY frvda file(s) (including your Company CHARKA format)
+    frvda_items = [x for x in items if x["kind"] == "frvda"]
+    for it in frvda_items:
+        frvda_df = extract_frvda(it["df"])
+        if frvda_df is None or len(frvda_df) == 0:
+            continue
+        master_all = master_all.merge(frvda_df, on="معرّف السائق", how="left", suffixes=("", "_new"))
+        # prefer new if exists
+        if "FR_new" in master_all.columns:
+            master_all["FR"] = master_all["FR_new"].combine_first(master_all["FR"])
+            master_all.drop(columns=["FR_new"], inplace=True)
+        if "VDA_new" in master_all.columns:
+            master_all["VDA"] = master_all["VDA_new"].combine_first(master_all["VDA"])
+            master_all.drop(columns=["VDA_new"], inplace=True)
+
+    # Clean names again + ensure space between first/last
+    master_all["اسم السائق"] = master_all["اسم السائق"].astype(str).map(clean_name)
+
+    # Filters for f
+    f = master_all.copy()
 
     if search.strip():
         s = search.strip().lower()
@@ -590,6 +660,7 @@ def build_datasets_from_uploads():
     f = f[(f["معدل توصيل"] >= min_delivery)]
     f = f[(f["معدل الغاء"] <= max_cancel)]
 
+    # Alerts
     f["تنبيه الغاء"] = (f["معدل الغاء"] >= CANCEL_ALERT_THRESHOLD).astype(int)
     f["تنبيه توصيل"] = (f["معدل توصيل"] < 1.0).astype(int)
     f["تنبيه طلبات"] = (pd.to_numeric(f["طلبات"], errors="coerce").fillna(0) < ORDERS_TARGET_MONTH).astype(int)
@@ -615,6 +686,7 @@ def build_datasets_from_uploads():
     ).reset_index(drop=True)
 
     f["ترتيب المتابعة"] = range(1, len(f) + 1)
+
     return master_all, f
 
 # =========================
@@ -657,7 +729,7 @@ def announcements_block():
 def page_admin(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("📊 الإدارة — نظرة (يومي / شهري)")
     if master_all is None:
-        st.info("قم بتحميل ملف/ملفات الأداء لعرض مؤشرات الإدارة.")
+        st.info("قم بتحميل ملف الأداء لعرض مؤشرات الإدارة.")
         return
 
     total_drivers = int(master_all["معرّف السائق"].nunique())
@@ -680,15 +752,17 @@ def page_admin(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
 def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
     if master_all is None:
-        st.info("ارفع ملف/ملفات للبدء.")
+        st.info("ارفع ملف الأداء للبدء. (ملفات FR/VDA فقط لا تعرض الأداء)")
         return
 
+    # KPI
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("عدد السائقين", f"{int(master_all['معرّف السائق'].nunique()):,}")
     k2.metric("متوسط معدل التوصيل", f"{master_all['معدل توصيل'].mean():.2%}" if len(master_all) else "—")
     k3.metric("متوسط معدل الإلغاء", f"{master_all['معدل الغاء'].mean():.2%}" if len(master_all) else "—")
     k4.metric("عدد الطلبات", f"{int(pd.to_numeric(master_all['طلبات'], errors='coerce').fillna(0).sum()):,}" if len(master_all) else "—")
 
+    # Priority table
     if f is not None and len(f):
         st.divider()
         st.subheader("🚨 سائقون يحتاجون متابعة (الأولوية أولاً)")
@@ -715,7 +789,7 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
         )
 
     # =========================
-    # Driver lookup (names only) + always show insights
+    # Driver lookup (RESTORED insights)
     # =========================
     st.divider()
     st.subheader("🔎 البحث عن سائق")
@@ -723,45 +797,52 @@ def page_ops(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     dl = master_all.copy()
     dl["اسم السائق"] = dl["اسم السائق"].astype(str).map(clean_name)
 
-    # ✅ unique names only (no duplication)
+    # Names list (full list, not filtered by f)
     driver_names = sorted([n for n in dl["اسم السائق"].dropna().unique().tolist() if n.strip() != ""])
-    selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_names, key="lookup_driver_name_only")
+    selected_name = st.selectbox("اختر السائق", ["(اختر)"] + driver_names, key="lookup_driver_name")
 
-    if selected != "(اختر)":
-        # pick the "worst"/highest priority row for that name, so insights are consistent
-        if f is not None and len(f):
-            pool = f[f["اسم السائق"].astype(str).map(clean_name) == selected].copy()
-        else:
-            pool = dl[dl["اسم السائق"] == selected].copy()
+    if selected_name != "(اختر)":
+        pool = dl[dl["اسم السائق"] == selected_name].copy()
 
-        if len(pool) == 0:
-            st.warning("لا توجد بيانات لهذا السائق ضمن الفلاتر الحالية.")
-            return
+        # If same name appears with multiple IDs => show an ID selector (low-key)
+        ids = sorted([int(x) for x in pool["معرّف السائق"].dropna().unique().tolist() if pd.notna(x)])
+        selected_id = None
+        if len(ids) > 1:
+            selected_id = st.selectbox("اختر المعرف (لنفس الاسم)", ids, key="lookup_driver_id")
+            pool = pool[pool["معرّف السائق"] == selected_id]
 
-        # ensure priority exists
-        if "أولوية" in pool.columns:
-            pool = pool.sort_values("أولوية", ascending=False)
-        else:
-            pool = pool.sort_values(["معدل الغاء", "معدل توصيل"], ascending=[False, True])
-
+        # pick “best row” to display: if f exists use same driver_id row from f for consistent priority view
         d = pool.iloc[0]
+        if selected_id is not None and f is not None and len(f):
+            alt = f[f["معرّف السائق"] == selected_id]
+            if len(alt):
+                d = alt.sort_values("أولوية", ascending=False).iloc[0]
 
+        # Insights (metrics)
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
-        c2.metric("طلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce').fillna(0)):,.0f}")
+        c2.metric("الطلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce').fillna(0)):,.0f}")
         c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
 
         wd = d.get("اعدد ايام العمل")
         c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
 
         fr = d.get("FR")
-        c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
+        c5.metric("FR", "—" if pd.isna(fr) else f"{int(pd.to_numeric(fr, errors='coerce').fillna(0)):,}")
 
         vda = d.get("VDA")
-        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
+        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(pd.to_numeric(vda, errors='coerce').fillna(0)):,}")
 
-        with st.expander("عرض بيانات السائق (الصف المختار)"):
-            st.dataframe(pd.DataFrame([d]), use_container_width=True, hide_index=True)
+        # Full row preview (clean)
+        with st.expander("عرض جميع بيانات السائق", expanded=False):
+            show_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل", "FR", "VDA"]
+            show_cols = [c for c in show_cols if c in dl.columns]
+            one = pd.DataFrame([{c: d.get(c, None) for c in show_cols}])
+            st.dataframe(
+                one.style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}", "طلبات": "{:,.0f}", "المهام المرفوضة": "{:,.0f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
 
 def page_hr():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
@@ -771,7 +852,7 @@ def page_hr():
 def page_supervision(master_all: pd.DataFrame | None, f: pd.DataFrame | None):
     st.subheader("🧭 الإشراف")
     if master_all is None:
-        st.info("ارفع ملف/ملفات للبدء.")
+        st.info("ارفع ملف الأداء للبدء.")
         return
     if f is None or not len(f):
         st.warning("لا توجد نتائج بعد الفلترة الحالية.")
