@@ -120,7 +120,6 @@ ROLES = {
 DEFAULT_PASSWORD = "12345"
 
 def get_secret(key: str, default: str = DEFAULT_PASSWORD) -> str:
-    # Safe access: returns DEFAULT_PASSWORD if secrets are missing
     try:
         auth = st.secrets.get("auth", {})
         val = auth.get(key, None)
@@ -166,6 +165,8 @@ def require_login():
 
 require_login()
 ROLE = st.session_state.role
+
+CAN_MANAGE_ANNOUNCEMENTS = ROLE in ("الإدارة", "التشغيل")
 
 # =========================
 # Sidebar: uploader + uploaded-file checklist + filters
@@ -265,7 +266,6 @@ def add_announcement(message: str, created_by_role: str):
 
     con = db_conn()
     cur = con.cursor()
-    # Insert into BOTH (covers any legacy NOT NULL on body/message)
     cur.execute(
         "INSERT INTO announcements (created_at, created_by_role, message, body) VALUES (?, ?, ?, ?)",
         (now_ts(), str(created_by_role), msg, msg)
@@ -340,22 +340,23 @@ def get_hr_registry() -> pd.DataFrame:
     return df
 
 # =========================
-# Sidebar: Announcements (low-key)
-# Only الإدارة + التشغيل can delete
+# Sidebar: Announcements
+# ALL users can view
+# ONLY الإدارة + التشغيل can create/delete
 # =========================
 with st.sidebar:
     st.divider()
-    with st.expander("📢 إعلان", expanded=False):
+    with st.expander("📢 الإعلانات", expanded=False):
         ann_df = get_latest_announcements(limit=10)
 
+        # View for everyone
         if len(ann_df):
-            CAN_DELETE = ROLE in ("الإدارة", "التشغيل")
-
             for _, r in ann_df.iterrows():
                 st.caption(f"{r['created_at']} — {r['created_by_role']}")
                 st.write(r["message"])
 
-                if CAN_DELETE:
+                # Delete ONLY for الإدارة + التشغيل
+                if CAN_MANAGE_ANNOUNCEMENTS:
                     if st.button("🗑️ حذف", key=f"del_ann_{int(r['id'])}"):
                         delete_announcement(int(r["id"]))
                         st.rerun()
@@ -364,15 +365,19 @@ with st.sidebar:
         else:
             st.caption("لا توجد إعلانات بعد.")
 
-        ann_text = st.text_area(
-            "إرسال إعلان",
-            placeholder="اكتب الإعلان هنا...",
-            label_visibility="collapsed",
-            height=80
-        )
-        if st.button("إرسال", use_container_width=True):
-            add_announcement(ann_text, ROLE)
-            st.rerun()
+        # Create ONLY for الإدارة + التشغيل
+        if CAN_MANAGE_ANNOUNCEMENTS:
+            ann_text = st.text_area(
+                "إرسال إعلان",
+                placeholder="اكتب الإعلان هنا...",
+                label_visibility="collapsed",
+                height=80
+            )
+            if st.button("إرسال", use_container_width=True):
+                add_announcement(ann_text, ROLE)
+                st.rerun()
+        else:
+            st.caption("يمكن للإدارة والتشغيل فقط إضافة/حذف الإعلانات.")
 
 # =========================
 # Excel helpers
@@ -413,7 +418,7 @@ PERF_COLS = {
     "first_name": ["اسم السائق", "First Name", "first_name"],
     "last_name": ["اسم السائق.1", "Last Name", "last_name"],
     "delivery_rate": ["معدل اكتمال الطلبات (غير متعلق بالتوصيل)", "معدل التوصيل", "معدل توصيل", "Delivery_Rate", "delivery_rate"],
-    "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل الغاء", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
+    "cancel_rate": ["معدل الإلغاء بسبب مشاكل التوصيل", "معدل غاء", "معدل الغاء", "معدل الإلغاء", "Cancel_Rate", "cancel_rate"],
     "orders_delivered": ["المهام التي تم تسليمها", "طلبات", "الطلبات", "الطلبات المسلمة", "Orders_Delivered", "orders_delivered"],
     "reject_total": ["المهام المرفوضة", "المهام المرفوضة (السائق)", "رفض السائق", "Driver Rejections", "driver_rejections"],
     "work_days": ["اعدد ايام العمل", "عدد ايام العمل", "أيام العمل"],
@@ -596,33 +601,10 @@ def page_ops(f: pd.DataFrame | None):
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("🔎 بحث سريع ")
-    driver_list = f["اسم السائق"].dropna().unique().tolist()
-    selected = st.selectbox("اختر السائق", ["(اختر)"] + driver_list, key="lookup_driver")
-
-    if selected != "(اختر)":
-        d = f[f["اسم السائق"] == selected].head(1).iloc[0]
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
-        c2.metric("طلبات", f"{int(float(d['طلبات'])):,}")
-        c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
-        wd = d.get("اعدد ايام العمل")
-        c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
-        fr = d.get("FR")
-        c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
-        vda = d.get("VDA")
-        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
-
-    st.divider()
     st.subheader("📋 الجدول النهائي (كامل البيانات)")
-    bottom_cols = ["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة", "اعدد ايام العمل"]
-    if "FR" in f.columns:
-        bottom_cols.append("FR")
-    if "VDA" in f.columns:
-        bottom_cols.append("VDA")
-
     st.dataframe(
-        f[bottom_cols].style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}"}),
+        f[["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]]
+        .style.format({"معدل توصيل": "{:.2%}", "معدل الغاء": "{:.2%}"}),
         use_container_width=True,
         hide_index=True
     )
