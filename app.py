@@ -100,7 +100,7 @@ with cimg2:
 
 st.markdown("# لوحة سفير - Safeer Dash")
 st.markdown(
-    '<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>',
+    '<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات / مسير الرواتب</div>',
     unsafe_allow_html=True
 )
 st.divider()
@@ -115,6 +115,7 @@ ROLES = {
     "الإشراف": "sup_password",
     "السيارات / الحركة": "fleet_password",
     "الحسابات": "accounts_password",
+    "مسير الرواتب": "payroll_password",   # ✅ ADDED
 }
 DEFAULT_PASSWORD = "12345"
 
@@ -255,7 +256,6 @@ def ensure_announcements_columns():
 ensure_announcements_columns()
 
 def add_announcement(message: str, created_by_role: str):
-    # ✅ permission enforced
     if str(created_by_role) not in ("الإدارة", "التشغيل"):
         return
     msg = (message or "").strip()
@@ -288,7 +288,6 @@ def get_latest_announcements(limit: int = 10) -> pd.DataFrame:
     return df
 
 def delete_announcement(ann_id: int, role: str):
-    # ✅ permission enforced
     if str(role) not in ("الإدارة", "التشغيل"):
         return
     con = db_conn()
@@ -502,8 +501,6 @@ def build_master_from_uploads():
         perf_item = file_items[0]
 
     perf = build_performance_report(perf_item["df"])
-
-    # store the full unfiltered master for driver lookup
     st.session_state["master_all"] = perf.copy()
 
     for _, r in perf.iterrows():
@@ -515,7 +512,6 @@ def build_master_from_uploads():
 
     f = perf.copy()
 
-    # Filters (only for the priority tables)
     if search.strip():
         s = search.strip().lower()
         f = f[
@@ -593,7 +589,6 @@ def page_ops(f: pd.DataFrame | None):
     attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
-    # ✅ DRIVER LOOKUP RESTORED (uses full master, not filtered)
     st.divider()
     st.subheader("🔎 بحث عن سائق")
 
@@ -602,17 +597,13 @@ def page_ops(f: pd.DataFrame | None):
         st.info("لا توجد بيانات كافية لعرض بحث عن سائق.")
         return
 
-    # build dropdown options: "Name (ID)"
     master_all = master_all.copy()
     master_all["معرّف السائق"] = pd.to_numeric(master_all["معرّف السائق"], errors="coerce").astype("Int64")
     master_all["اسم السائق"] = master_all["اسم السائق"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
-
     master_all = master_all.dropna(subset=["معرّف السائق"]).drop_duplicates(subset=["معرّف السائق"], keep="first")
-
     master_all["اختيار"] = master_all["اسم السائق"] + " (" + master_all["معرّف السائق"].astype(str) + ")"
-    options = master_all["اختيار"].tolist()
 
-    selected = st.selectbox("اختر السائق", ["(اختر)"] + options)
+    selected = st.selectbox("اختر السائق", ["(اختر)"] + master_all["اختيار"].tolist())
 
     if selected != "(اختر)":
         did = int(selected.split("(")[-1].replace(")", "").strip())
@@ -659,6 +650,10 @@ def page_accounts():
     st.subheader("💰 الحسابات")
     st.info("جاهز — عند تزويدي بملف الحسابات (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
 
+def page_payroll():
+    st.subheader("🧾 مسير الرواتب")
+    st.info("جاهز — عند تزويدي بملف الرواتب (الأعمدة) سأربطه هنا مع الموارد البشرية والحسابات.")
+
 # =========================
 # Render
 # =========================
@@ -676,5 +671,7 @@ elif ROLE == "السيارات / الحركة":
     page_fleet()
 elif ROLE == "الحسابات":
     page_accounts()
+elif ROLE == "مسير الرواتب":
+    page_payroll()
 else:
     st.info("الدور غير معروف.")
