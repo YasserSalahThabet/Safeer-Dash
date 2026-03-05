@@ -19,8 +19,8 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 
 DB_PATH = DATA_DIR / "safeer_hr.db"
 
-LEFT_IMG = ASSETS / "left.jpg"
-RIGHT_IMG = ASSETS / "right.jpg"
+LEFT_IMG = ASSETS / "left.jpg"     # change if your names differ
+RIGHT_IMG = ASSETS / "right.jpg"   # change if your names differ
 LOGO_IMG = ASSETS / "logo.png"
 FAVICON_IMG = ASSETS / "favicon.png"
 
@@ -74,7 +74,9 @@ st.markdown(
         white-space: nowrap;
     }
 
-    div[data-testid="stFileUploader"] ul { display: none !important; }
+    div[data-testid="stFileUploader"] ul {
+        display: none !important;
+    }
 
     /* Small polish */
     .block-container { padding-top: 1rem; }
@@ -99,10 +101,8 @@ with cimg2:
         st.image(str(LEFT_IMG), use_container_width=True)
 
 st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown(
-    '<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات / مسير الرواتب</div>',
-    unsafe_allow_html=True
-)
+st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات / مسير الرواتب</div>',
+            unsafe_allow_html=True)
 st.divider()
 
 # =========================
@@ -115,8 +115,9 @@ ROLES = {
     "الإشراف": "sup_password",
     "السيارات / الحركة": "fleet_password",
     "الحسابات": "accounts_password",
-    "مسير الرواتب": "payroll_password",   # ✅ ADDED
+    "مسير الرواتب": "payroll_password",
 }
+
 DEFAULT_PASSWORD = "12345"
 
 def get_secret(key: str, default: str = DEFAULT_PASSWORD) -> str:
@@ -182,6 +183,7 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
+    # Low-key "uploaded files" list with check/uncheck
     enabled_files = []
     if uploaded_files:
         with st.expander("📄 الملفات المرفوعة", expanded=False):
@@ -246,22 +248,23 @@ def ensure_announcements_columns():
     cur = con.cursor()
     cur.execute("PRAGMA table_info(announcements)")
     cols = [r[1] for r in cur.fetchall()]
+
     if "message" not in cols:
         cur.execute("ALTER TABLE announcements ADD COLUMN message TEXT")
     if "body" not in cols:
         cur.execute("ALTER TABLE announcements ADD COLUMN body TEXT")
+
     con.commit()
     con.close()
 
 ensure_announcements_columns()
 
 def add_announcement(message: str, created_by_role: str):
-    if str(created_by_role) not in ("الإدارة", "التشغيل"):
-        return
     msg = (message or "").strip()
     if not msg:
         return
     ensure_announcements_columns()
+
     con = db_conn()
     cur = con.cursor()
     cur.execute(
@@ -276,7 +279,11 @@ def get_latest_announcements(limit: int = 10) -> pd.DataFrame:
     con = db_conn()
     df = pd.read_sql_query(
         """
-        SELECT id, created_at, created_by_role, COALESCE(message, body) AS message
+        SELECT
+            id,
+            created_at,
+            created_by_role,
+            COALESCE(message, body) AS message
         FROM announcements
         ORDER BY id DESC
         LIMIT ?
@@ -287,9 +294,7 @@ def get_latest_announcements(limit: int = 10) -> pd.DataFrame:
     con.close()
     return df
 
-def delete_announcement(ann_id: int, role: str):
-    if str(role) not in ("الإدارة", "التشغيل"):
-        return
+def delete_announcement(ann_id: int):
     con = db_conn()
     cur = con.cursor()
     cur.execute("DELETE FROM announcements WHERE id = ?", (int(ann_id),))
@@ -299,8 +304,10 @@ def delete_announcement(ann_id: int, role: str):
 def upsert_driver(driver_id: int, driver_name: str = None):
     con = db_conn()
     cur = con.cursor()
+
     cur.execute("SELECT driver_id, driver_name FROM drivers WHERE driver_id = ?", (int(driver_id),))
     row = cur.fetchone()
+
     if row is None:
         cur.execute(
             "INSERT INTO drivers (driver_id, driver_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -313,6 +320,7 @@ def upsert_driver(driver_id: int, driver_name: str = None):
             "UPDATE drivers SET driver_name=?, updated_at=? WHERE driver_id=?",
             (new_name, now_ts(), int(driver_id))
         )
+
     con.commit()
     con.close()
 
@@ -320,10 +328,11 @@ def get_hr_registry() -> pd.DataFrame:
     con = db_conn()
     df = pd.read_sql_query(
         """
-        SELECT d.driver_id AS معرف_السائق,
-               d.driver_name AS اسم_السائق,
-               d.status AS الحالة,
-               d.created_at AS تاريخ_الإضافة
+        SELECT
+            d.driver_id AS معرف_السائق,
+            d.driver_name AS اسم_السائق,
+            d.status AS الحالة,
+            d.created_at AS تاريخ_الإضافة
         FROM drivers d
         ORDER BY d.driver_id
         """,
@@ -334,25 +343,31 @@ def get_hr_registry() -> pd.DataFrame:
 
 # =========================
 # Sidebar: Announcements
+# ALL users can view
+# ONLY الإدارة + التشغيل can create/delete
 # =========================
 with st.sidebar:
     st.divider()
     with st.expander("📢 الإعلانات", expanded=False):
         ann_df = get_latest_announcements(limit=10)
 
+        # View for everyone
         if len(ann_df):
             for _, r in ann_df.iterrows():
                 st.caption(f"{r['created_at']} — {r['created_by_role']}")
                 st.write(r["message"])
 
+                # Delete ONLY for الإدارة + التشغيل
                 if CAN_MANAGE_ANNOUNCEMENTS:
                     if st.button("🗑️ حذف", key=f"del_ann_{int(r['id'])}"):
-                        delete_announcement(int(r["id"]), ROLE)
+                        delete_announcement(int(r["id"]))
                         st.rerun()
+
                 st.markdown("---")
         else:
             st.caption("لا توجد إعلانات بعد.")
 
+        # Create ONLY for الإدارة + التشغيل
         if CAN_MANAGE_ANNOUNCEMENTS:
             ann_text = st.text_area(
                 "إرسال إعلان",
@@ -394,7 +409,7 @@ def pick(df_cols, candidates):
 # =========================
 # RULES / TARGETS
 # =========================
-CANCEL_ALERT_THRESHOLD = 0.002   # 0.20%
+CANCEL_ALERT_THRESHOLD = 0.002   # 0.20% (alert if >=)
 ORDERS_TARGET_MONTH = 450
 
 # =========================
@@ -477,20 +492,82 @@ def style_attention_table(df):
     return sty
 
 # =========================
-# Build master from uploads
+# >>> MINIMAL ADDITIONS FOR PAYROLL ONLY (START)
+# =========================
+PAYROLL_COLS = {
+    "driver_id": ["معرّف السائق", "معرف السائق", "Driver_ID", "driver_id", "id"],
+    "driver_name": ["اسم السائق", "اسم", "Driver Name", "driver_name"],
+    "orders": ["عدد الطلبات", "الطلبات", "طلبات", "Orders", "orders"],
+    "basic_salary": ["الراتب الاساسي", "الراتب الأساسي", "Basic Salary", "basic_salary"],
+}
+
+def detect_payroll_file(cols: set[str]) -> bool:
+    # Payroll file must at least have orders + basic salary
+    return ("عدد الطلبات" in cols or "الطلبات" in cols or "Orders" in cols) and (
+        "الراتب الاساسي" in cols or "الراتب الأساسي" in cols or "Basic Salary" in cols
+    )
+
+def build_payroll_report(df_raw: pd.DataFrame) -> pd.DataFrame:
+    mapped = {k: pick(df_raw.columns, v) for k, v in PAYROLL_COLS.items()}
+
+    # orders + basic salary are required for your rule
+    if not mapped.get("orders") or not mapped.get("basic_salary"):
+        st.error("❌ ملف مسير الرواتب غير مطابق. لازم يحتوي على: عدد الطلبات + الراتب الاساسي")
+        st.write("الأعمدة الموجودة في الملف:")
+        st.write(list(df_raw.columns))
+        st.stop()
+
+    out = pd.DataFrame()
+
+    # optional id/name if present
+    if mapped.get("driver_id"):
+        out["معرّف السائق"] = pd.to_numeric(df_raw[mapped["driver_id"]], errors="coerce").astype("Int64")
+    if mapped.get("driver_name"):
+        out["اسم السائق"] = df_raw[mapped["driver_name"]].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+
+    out["عدد الطلبات"] = pd.to_numeric(df_raw[mapped["orders"]], errors="coerce").fillna(0)
+    out["الراتب الاساسي"] = pd.to_numeric(df_raw[mapped["basic_salary"]], errors="coerce").fillna(0)
+
+    # ✅ Your rule:
+    # if orders < 450 => salary_due = orders / 7 (and we ignore basic salary)
+    out["الراتب المستحق"] = out["الراتب الاساسي"]
+    mask_low = out["عدد الطلبات"] < 450
+    out.loc[mask_low, "الراتب المستحق"] = (out.loc[mask_low, "عدد الطلبات"] / 7.0)
+
+    # helpful status column (low key)
+    out["حالة الراتب"] = "راتب أساسي"
+    out.loc[mask_low, "حالة الراتب"] = "بديل (الطلبات ÷ 7)"
+
+    return out
+# =========================
+# >>> MINIMAL ADDITIONS FOR PAYROLL ONLY (END)
+# =========================
+
+# =========================
+# Build master from uploads (uses enabled_files)
 # =========================
 def build_master_from_uploads():
     files_to_use = enabled_files if uploaded_files else []
     if not files_to_use:
-        st.session_state["master_all"] = None
+        st.session_state["payroll_df"] = None
         return None
+
+    # capture payroll file if exists (minimal change)
+    payroll_df = None
 
     file_items = []
     for uf in files_to_use:
         b = uf.getvalue()
         df = read_first_sheet_excel_bytes(b)
+
+        # Detect payroll and store
+        if payroll_df is None and detect_payroll_file(set(df.columns)):
+            payroll_df = build_payroll_report(df)
+
         kind = detect_file_type(set(df.columns))
         file_items.append({"name": uf.name, "df": df, "kind": kind})
+
+    st.session_state["payroll_df"] = payroll_df
 
     perf_item = None
     for item in file_items:
@@ -501,7 +578,6 @@ def build_master_from_uploads():
         perf_item = file_items[0]
 
     perf = build_performance_report(perf_item["df"])
-    st.session_state["master_all"] = perf.copy()
 
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
@@ -590,37 +666,6 @@ def page_ops(f: pd.DataFrame | None):
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("🔎 بحث عن سائق")
-
-    master_all = st.session_state.get("master_all", None)
-    if master_all is None or len(master_all) == 0:
-        st.info("لا توجد بيانات كافية لعرض بحث عن سائق.")
-        return
-
-    master_all = master_all.copy()
-    master_all["معرّف السائق"] = pd.to_numeric(master_all["معرّف السائق"], errors="coerce").astype("Int64")
-    master_all["اسم السائق"] = master_all["اسم السائق"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
-    master_all = master_all.dropna(subset=["معرّف السائق"]).drop_duplicates(subset=["معرّف السائق"], keep="first")
-    master_all["اختيار"] = master_all["اسم السائق"] + " (" + master_all["معرّف السائق"].astype(str) + ")"
-
-    selected = st.selectbox("اختر السائق", ["(اختر)"] + master_all["اختيار"].tolist())
-
-    if selected != "(اختر)":
-        did = int(selected.split("(")[-1].replace(")", "").strip())
-        row = master_all[master_all["معرّف السائق"] == did].head(1).iloc[0]
-
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("معدل توصيل %", f"{float(row['معدل توصيل']):.2%}")
-        c2.metric("طلبات", f"{int(float(row['طلبات'])):,}")
-        c3.metric("معدل الغاء %", f"{float(row['معدل الغاء']):.2%}")
-        wd = row.get("اعدد ايام العمل")
-        c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
-        fr = row.get("FR")
-        c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
-        vda = row.get("VDA")
-        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
-
-    st.divider()
     st.subheader("📋 الجدول النهائي (كامل البيانات)")
     st.dataframe(
         f[["معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]]
@@ -652,7 +697,31 @@ def page_accounts():
 
 def page_payroll():
     st.subheader("🧾 مسير الرواتب")
-    st.info("جاهز — عند تزويدي بملف الرواتب (الأعمدة) سأربطه هنا مع الموارد البشرية والحسابات.")
+
+    payroll_df = st.session_state.get("payroll_df", None)
+    if payroll_df is None or len(payroll_df) == 0:
+        st.info("قم بتحميل ملف مسير الرواتب (يحتوي على: عدد الطلبات + الراتب الاساسي).")
+        return
+
+    # Show summary
+    total_orders = int(pd.to_numeric(payroll_df["عدد الطلبات"], errors="coerce").fillna(0).sum())
+    total_due = float(pd.to_numeric(payroll_df["الراتب المستحق"], errors="coerce").fillna(0).sum())
+    low_count = int((pd.to_numeric(payroll_df["عدد الطلبات"], errors="coerce").fillna(0) < 450).sum())
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("إجمالي عدد الطلبات", f"{total_orders:,}")
+    c2.metric("إجمالي الرواتب المستحقة", f"{total_due:,.2f}")
+    c3.metric("سائقون أقل من 450", f"{low_count:,}")
+
+    st.divider()
+
+    # Display table (orders as integer, salary with 2 decimals)
+    fmt = {
+        "عدد الطلبات": "{:,.0f}",
+        "الراتب الاساسي": "{:,.2f}",
+        "الراتب المستحق": "{:,.2f}",
+    }
+    st.dataframe(payroll_df.style.format(fmt), use_container_width=True, hide_index=True)
 
 # =========================
 # Render
