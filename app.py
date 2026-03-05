@@ -117,9 +117,16 @@ ROLES = {
     "الحسابات": "accounts_password",
 }
 
-def get_secret(key: str, default: str = "") -> str:
+DEFAULT_PASSWORD = "12345"
+
+def get_secret(key: str, default: str = DEFAULT_PASSWORD) -> str:
+    # Safe access: returns DEFAULT_PASSWORD if secrets are missing
     try:
-        return st.secrets["auth"][key]
+        auth = st.secrets.get("auth", {})
+        val = auth.get(key, None)
+        if val is None or str(val).strip() == "":
+            return default
+        return str(val)
     except Exception:
         return default
 
@@ -145,13 +152,13 @@ def require_login():
             st.rerun()
 
         if login:
-            expected = get_secret(ROLES[role], "")
-            if expected and pwd == expected:
+            expected = get_secret(ROLES[role])  # defaults to 12345 if missing
+            if str(pwd).strip() == str(expected).strip():
                 st.session_state.logged_in = True
                 st.session_state.role = role
                 st.rerun()
             else:
-                st.error("بيانات الدخول غير صحيحة أو لم يتم إعداد Secrets.")
+                st.error("كلمة المرور غير صحيحة.")
 
     if not st.session_state.logged_in:
         st.info("الرجاء تسجيل الدخول من الشريط الجانبي.")
@@ -161,7 +168,7 @@ require_login()
 ROLE = st.session_state.role
 
 # =========================
-# Sidebar: uploader + filters ONLY (no menu)
+# Sidebar: uploader + uploaded-file checklist + filters
 # =========================
 with st.sidebar:
     st.markdown(f"### المستخدم الحالي: {ROLE}")
@@ -174,13 +181,27 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
+    # Low-key "uploaded files" list with check/uncheck
+    enabled_files = []
+    if uploaded_files:
+        with st.expander("📄 الملفات المرفوعة", expanded=False):
+            st.caption("✅ فعّل الملف الذي تريد أن يقرأه النظام. أزل التفعيل لتعطيله.")
+            for i, uf in enumerate(uploaded_files):
+                key = f"file_enable_{i}_{uf.name}"
+                if key not in st.session_state:
+                    st.session_state[key] = True
+                checked = st.checkbox(uf.name, value=st.session_state[key], key=key)
+                if checked:
+                    enabled_files.append(uf)
+            st.caption(f"الملفات المفعّلة: {len(enabled_files)} / {len(uploaded_files)}")
+
     st.divider()
     search = st.text_input("بحث (المعرف / الاسم)", "")
     min_delivery = st.slider("أقل معدل توصيل", 0.0, 1.0, 0.0, 0.01)
     max_cancel = st.slider("أعلى معدل إلغاء (فلترة)", 0.0, 1.0, 1.0, 0.01)
 
 # =========================
-# SQLite (HR registry)
+# SQLite
 # =========================
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -191,6 +212,7 @@ def now_ts():
 def init_db():
     con = db_conn()
     cur = con.cursor()
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS drivers (
         driver_id INTEGER PRIMARY KEY,
@@ -203,54 +225,7 @@ def init_db():
         updated_at TEXT
     )
     """)
-    con.commit()
-    con.close()
 
-init_db()
-
-def upsert_driver(driver_id: int, driver_name: str = None):
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute("SELECT driver_id, driver_name FROM drivers WHERE driver_id = ?", (int(driver_id),))
-    row = cur.fetchone()
-
-    if row is None:
-        cur.execute("""
-            INSERT INTO drivers (driver_id, driver_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        """, (int(driver_id), driver_name or "", now_ts(), now_ts()))
-    else:
-        existing_name = row[1] or ""
-        new_name = existing_name if (driver_name is None or str(driver_name).strip() == "") else str(driver_name).strip()
-        cur.execute("""
-            UPDATE drivers
-            SET driver_name=?, updated_at=?
-            WHERE driver_id=?
-        """, (new_name, now_ts(), int(driver_id)))
-
-    con.commit()
-    con.close()
-
-def get_hr_registry() -> pd.DataFrame:
-    con = db_conn()
-    df = pd.read_sql_query("""
-        SELECT
-            d.driver_id AS معرف_السائق,
-            d.driver_name AS اسم_السائق,
-            d.status AS الحالة,
-            d.created_at AS تاريخ_الإضافة
-        FROM drivers d
-        ORDER BY d.driver_id
-    """, con)
-    con.close()
-    return df
-
-# =========================
-# Announcements (SQLite)
-# =========================
-def ensure_announcements_table():
-    con = db_conn()
-    cur = con.cursor()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS announcements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -260,21 +235,18 @@ def ensure_announcements_table():
         body TEXT
     )
     """)
+
     con.commit()
     con.close()
 
+init_db()
+
 def ensure_announcements_columns():
-    # Some earlier versions may have only "body" NOT NULL or only "message".
     con = db_conn()
     cur = con.cursor()
     cur.execute("PRAGMA table_info(announcements)")
     cols = [r[1] for r in cur.fetchall()]
-    if "announcements" not in [t[0] for t in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-        con.close()
-        ensure_announcements_table()
-        return
 
-    # Add missing columns (safe no-op if already exists)
     if "message" not in cols:
         cur.execute("ALTER TABLE announcements ADD COLUMN message TEXT")
     if "body" not in cols:
@@ -283,7 +255,6 @@ def ensure_announcements_columns():
     con.commit()
     con.close()
 
-ensure_announcements_table()
 ensure_announcements_columns()
 
 def add_announcement(message: str, created_by_role: str):
@@ -294,44 +265,15 @@ def add_announcement(message: str, created_by_role: str):
 
     con = db_conn()
     cur = con.cursor()
-
-    # Insert into BOTH columns to satisfy any schema constraint (message or body)
+    # Insert into BOTH (covers any legacy NOT NULL on body/message)
     cur.execute(
         "INSERT INTO announcements (created_at, created_by_role, message, body) VALUES (?, ?, ?, ?)",
         (now_ts(), str(created_by_role), msg, msg)
     )
-
     con.commit()
     con.close()
 
-def get_latest_announcements(limit: int = 5) -> pd.DataFrame:
-    ensure_announcements_columns()
-    con = db_conn()
-    df = pd.read_sql_query(
-        """
-        SELECT
-            created_at,
-            created_by_role,
-            COALESCE(message, body) AS message
-        FROM announcements
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        con,
-        params=(int(limit),)
-    )
-    con.close()
-    return df
-
-def delete_announcement(ann_id: int):
-    ensure_announcements_columns()
-    con = db_conn()
-    cur = con.cursor()
-    cur.execute("DELETE FROM announcements WHERE id = ?", (int(ann_id),))
-    con.commit()
-    con.close()
-
-def get_latest_announcements_with_id(limit: int = 10) -> pd.DataFrame:
+def get_latest_announcements(limit: int = 10) -> pd.DataFrame:
     ensure_announcements_columns()
     con = db_conn()
     df = pd.read_sql_query(
@@ -351,14 +293,60 @@ def get_latest_announcements_with_id(limit: int = 10) -> pd.DataFrame:
     con.close()
     return df
 
+def delete_announcement(ann_id: int):
+    con = db_conn()
+    cur = con.cursor()
+    cur.execute("DELETE FROM announcements WHERE id = ?", (int(ann_id),))
+    con.commit()
+    con.close()
+
+def upsert_driver(driver_id: int, driver_name: str = None):
+    con = db_conn()
+    cur = con.cursor()
+    cur.execute("SELECT driver_id, driver_name FROM drivers WHERE driver_id = ?", (int(driver_id),))
+    row = cur.fetchone()
+
+    if row is None:
+        cur.execute(
+            "INSERT INTO drivers (driver_id, driver_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (int(driver_id), driver_name or "", now_ts(), now_ts())
+        )
+    else:
+        existing_name = row[1] or ""
+        new_name = existing_name if (driver_name is None or str(driver_name).strip() == "") else str(driver_name).strip()
+        cur.execute(
+            "UPDATE drivers SET driver_name=?, updated_at=? WHERE driver_id=?",
+            (new_name, now_ts(), int(driver_id))
+        )
+
+    con.commit()
+    con.close()
+
+def get_hr_registry() -> pd.DataFrame:
+    con = db_conn()
+    df = pd.read_sql_query(
+        """
+        SELECT
+            d.driver_id AS معرف_السائق,
+            d.driver_name AS اسم_السائق,
+            d.status AS الحالة,
+            d.created_at AS تاريخ_الإضافة
+        FROM drivers d
+        ORDER BY d.driver_id
+        """,
+        con
+    )
+    con.close()
+    return df
+
 # =========================
-# Sidebar: announcements (low key)
+# Sidebar: Announcements (low-key)
 # Only الإدارة + التشغيل can delete
 # =========================
 with st.sidebar:
     st.divider()
     with st.expander("📢 إعلان", expanded=False):
-        ann_df = get_latest_announcements_with_id(limit=10)
+        ann_df = get_latest_announcements(limit=10)
 
         if len(ann_df):
             CAN_DELETE = ROLE in ("الإدارة", "التشغيل")
@@ -497,14 +485,15 @@ def style_attention_table(df):
     return sty
 
 # =========================
-# Build master from uploads
+# Build master from uploads (uses enabled_files)
 # =========================
 def build_master_from_uploads():
-    if not uploaded_files:
+    files_to_use = enabled_files if uploaded_files else []
+    if not files_to_use:
         return None
 
     file_items = []
-    for uf in uploaded_files:
+    for uf in files_to_use:
         b = uf.getvalue()
         df = read_first_sheet_excel_bytes(b)
         kind = detect_file_type(set(df.columns))
@@ -520,7 +509,6 @@ def build_master_from_uploads():
 
     perf = build_performance_report(perf_item["df"])
 
-    # Save driver names to DB
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
         name = r.get("اسم السائق")
@@ -530,7 +518,6 @@ def build_master_from_uploads():
 
     f = perf.copy()
 
-    # Filters
     if search.strip():
         s = search.strip().lower()
         f = f[
@@ -540,7 +527,6 @@ def build_master_from_uploads():
     f = f[(f["معدل توصيل"] >= min_delivery)]
     f = f[(f["معدل الغاء"] <= max_cancel)]
 
-    # Alerts: cancel is bad if HIGH
     f["تنبيه الغاء"] = (f["معدل الغاء"] >= CANCEL_ALERT_THRESHOLD).astype(int)
     f["تنبيه توصيل"] = (f["معدل توصيل"] < 1.0).astype(int)
     f["تنبيه طلبات"] = (f["طلبات"] < ORDERS_TARGET_MONTH).astype(int)
@@ -550,7 +536,6 @@ def build_master_from_uploads():
     cancel_over = (f["معدل الغاء"] - CANCEL_ALERT_THRESHOLD).clip(lower=0)
     orders_gap = (ORDERS_TARGET_MONTH - f["طلبات"]).clip(lower=0)
 
-    # Priority: cancel dominates
     f["أولوية"] = (
         f["تنبيه الغاء"] * 1_000_000
         + cancel_over * 500_000
@@ -569,7 +554,7 @@ def build_master_from_uploads():
     return f
 
 # =========================
-# Pages (by ROLE only)
+# Pages
 # =========================
 def page_admin(f: pd.DataFrame | None):
     st.subheader("📊 الإدارة — نظرة  (يومي / شهري)")
@@ -593,11 +578,6 @@ def page_admin(f: pd.DataFrame | None):
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(25)), use_container_width=True, hide_index=True)
 
-    st.divider()
-    st.markdown("### 📈 توزيع معدل الإلغاء")
-    fig = px.histogram(f, x="معدل الغاء", nbins=30, title="توزيع معدل الإلغاء (معدل الغاء)")
-    st.plotly_chart(fig, use_container_width=True)
-
 def page_ops(f: pd.DataFrame | None):
     st.subheader("🚚 التشغيل")
     if f is None:
@@ -608,7 +588,7 @@ def page_ops(f: pd.DataFrame | None):
     k1.metric("عدد السائقين", f"{len(f):,}")
     k2.metric("متوسط معدل التوصيل", f"{f['معدل توصيل'].mean():.2%}" if len(f) else "—")
     k3.metric("متوسط معدل الإلغاء", f"{f['معدل الغاء'].mean():.2%}" if len(f) else "—")
-    k4.metric("عدد الطلبات", f"{int(f['طلبات'].sum()):,}" if len(f) else "—")
+    k4.metric("عدد الطلبات", f"{int(pd.to_numeric(f['طلبات'], errors='coerce').fillna(0).sum()):,}" if len(f) else "—")
 
     st.divider()
     st.subheader("🚨 الأولوية")
@@ -624,7 +604,7 @@ def page_ops(f: pd.DataFrame | None):
         d = f[f["اسم السائق"] == selected].head(1).iloc[0]
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("معدل توصيل %", f"{float(d['معدل توصيل']):.2%}")
-        c2.metric("طلبات", f"{int(pd.to_numeric(d['طلبات'], errors='coerce') or 0):,}")
+        c2.metric("طلبات", f"{int(float(d['طلبات'])):,}")
         c3.metric("معدل الغاء %", f"{float(d['معدل الغاء']):.2%}")
         wd = d.get("اعدد ايام العمل")
         c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
@@ -647,13 +627,6 @@ def page_ops(f: pd.DataFrame | None):
         hide_index=True
     )
 
-    st.download_button(
-        "⬇️ تحميل النتائج CSV",
-        data=f.to_csv(index=False, encoding="utf-8-sig"),
-        file_name="safeer_master_filtered.csv",
-        mime="text/csv",
-    )
-
 def page_hr():
     st.subheader("👥 الموارد البشرية — سجل السائقين (دائم)")
     registry = get_hr_registry()
@@ -664,7 +637,6 @@ def page_supervision(f: pd.DataFrame | None):
     if f is None:
         st.info("ارفع ملف/ملفات للبدء.")
         return
-    st.markdown("### 🚨 سائقون يحتاجون متابعة )")
     cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[cols].head(80)), use_container_width=True, hide_index=True)
 
@@ -677,7 +649,7 @@ def page_accounts():
     st.info("جاهز — عند تزويدي بملف الحسابات (الأعمدة) سأربطه هنا مع الإدارة والتشغيل.")
 
 # =========================
-# Render (role decides)
+# Render
 # =========================
 f = build_master_from_uploads()
 
