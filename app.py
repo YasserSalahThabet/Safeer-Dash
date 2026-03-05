@@ -19,8 +19,8 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 
 DB_PATH = DATA_DIR / "safeer_hr.db"
 
-LEFT_IMG = ASSETS / "left.jpg"     # change if your names differ
-RIGHT_IMG = ASSETS / "right.jpg"   # change if your names differ
+LEFT_IMG = ASSETS / "left.jpg"
+RIGHT_IMG = ASSETS / "right.jpg"
 LOGO_IMG = ASSETS / "logo.png"
 FAVICON_IMG = ASSETS / "favicon.png"
 
@@ -74,9 +74,7 @@ st.markdown(
         white-space: nowrap;
     }
 
-    div[data-testid="stFileUploader"] ul {
-        display: none !important;
-    }
+    div[data-testid="stFileUploader"] ul { display: none !important; }
 
     /* Small polish */
     .block-container { padding-top: 1rem; }
@@ -101,8 +99,10 @@ with cimg2:
         st.image(str(LEFT_IMG), use_container_width=True)
 
 st.markdown("# لوحة سفير - Safeer Dash")
-st.markdown('<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>',
-            unsafe_allow_html=True)
+st.markdown(
+    '<div class="safeer-subtitle">الإدارة / التشغيل / الموارد البشرية / الإشراف / السيارات / الحسابات</div>',
+    unsafe_allow_html=True
+)
 st.divider()
 
 # =========================
@@ -116,7 +116,6 @@ ROLES = {
     "السيارات / الحركة": "fleet_password",
     "الحسابات": "accounts_password",
 }
-
 DEFAULT_PASSWORD = "12345"
 
 def get_secret(key: str, default: str = DEFAULT_PASSWORD) -> str:
@@ -182,7 +181,6 @@ with st.sidebar:
         label_visibility="collapsed"
     )
 
-    # Low-key "uploaded files" list with check/uncheck
     enabled_files = []
     if uploaded_files:
         with st.expander("📄 الملفات المرفوعة", expanded=False):
@@ -247,23 +245,23 @@ def ensure_announcements_columns():
     cur = con.cursor()
     cur.execute("PRAGMA table_info(announcements)")
     cols = [r[1] for r in cur.fetchall()]
-
     if "message" not in cols:
         cur.execute("ALTER TABLE announcements ADD COLUMN message TEXT")
     if "body" not in cols:
         cur.execute("ALTER TABLE announcements ADD COLUMN body TEXT")
-
     con.commit()
     con.close()
 
 ensure_announcements_columns()
 
 def add_announcement(message: str, created_by_role: str):
+    # ✅ permission enforced
+    if str(created_by_role) not in ("الإدارة", "التشغيل"):
+        return
     msg = (message or "").strip()
     if not msg:
         return
     ensure_announcements_columns()
-
     con = db_conn()
     cur = con.cursor()
     cur.execute(
@@ -278,11 +276,7 @@ def get_latest_announcements(limit: int = 10) -> pd.DataFrame:
     con = db_conn()
     df = pd.read_sql_query(
         """
-        SELECT
-            id,
-            created_at,
-            created_by_role,
-            COALESCE(message, body) AS message
+        SELECT id, created_at, created_by_role, COALESCE(message, body) AS message
         FROM announcements
         ORDER BY id DESC
         LIMIT ?
@@ -293,7 +287,10 @@ def get_latest_announcements(limit: int = 10) -> pd.DataFrame:
     con.close()
     return df
 
-def delete_announcement(ann_id: int):
+def delete_announcement(ann_id: int, role: str):
+    # ✅ permission enforced
+    if str(role) not in ("الإدارة", "التشغيل"):
+        return
     con = db_conn()
     cur = con.cursor()
     cur.execute("DELETE FROM announcements WHERE id = ?", (int(ann_id),))
@@ -305,7 +302,6 @@ def upsert_driver(driver_id: int, driver_name: str = None):
     cur = con.cursor()
     cur.execute("SELECT driver_id, driver_name FROM drivers WHERE driver_id = ?", (int(driver_id),))
     row = cur.fetchone()
-
     if row is None:
         cur.execute(
             "INSERT INTO drivers (driver_id, driver_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -318,7 +314,6 @@ def upsert_driver(driver_id: int, driver_name: str = None):
             "UPDATE drivers SET driver_name=?, updated_at=? WHERE driver_id=?",
             (new_name, now_ts(), int(driver_id))
         )
-
     con.commit()
     con.close()
 
@@ -326,11 +321,10 @@ def get_hr_registry() -> pd.DataFrame:
     con = db_conn()
     df = pd.read_sql_query(
         """
-        SELECT
-            d.driver_id AS معرف_السائق,
-            d.driver_name AS اسم_السائق,
-            d.status AS الحالة,
-            d.created_at AS تاريخ_الإضافة
+        SELECT d.driver_id AS معرف_السائق,
+               d.driver_name AS اسم_السائق,
+               d.status AS الحالة,
+               d.created_at AS تاريخ_الإضافة
         FROM drivers d
         ORDER BY d.driver_id
         """,
@@ -341,31 +335,25 @@ def get_hr_registry() -> pd.DataFrame:
 
 # =========================
 # Sidebar: Announcements
-# ALL users can view
-# ONLY الإدارة + التشغيل can create/delete
 # =========================
 with st.sidebar:
     st.divider()
     with st.expander("📢 الإعلانات", expanded=False):
         ann_df = get_latest_announcements(limit=10)
 
-        # View for everyone
         if len(ann_df):
             for _, r in ann_df.iterrows():
                 st.caption(f"{r['created_at']} — {r['created_by_role']}")
                 st.write(r["message"])
 
-                # Delete ONLY for الإدارة + التشغيل
                 if CAN_MANAGE_ANNOUNCEMENTS:
                     if st.button("🗑️ حذف", key=f"del_ann_{int(r['id'])}"):
-                        delete_announcement(int(r["id"]))
+                        delete_announcement(int(r["id"]), ROLE)
                         st.rerun()
-
                 st.markdown("---")
         else:
             st.caption("لا توجد إعلانات بعد.")
 
-        # Create ONLY for الإدارة + التشغيل
         if CAN_MANAGE_ANNOUNCEMENTS:
             ann_text = st.text_area(
                 "إرسال إعلان",
@@ -407,7 +395,7 @@ def pick(df_cols, candidates):
 # =========================
 # RULES / TARGETS
 # =========================
-CANCEL_ALERT_THRESHOLD = 0.002   # 0.20% (alert if >=)
+CANCEL_ALERT_THRESHOLD = 0.002   # 0.20%
 ORDERS_TARGET_MONTH = 450
 
 # =========================
@@ -490,11 +478,12 @@ def style_attention_table(df):
     return sty
 
 # =========================
-# Build master from uploads (uses enabled_files)
+# Build master from uploads
 # =========================
 def build_master_from_uploads():
     files_to_use = enabled_files if uploaded_files else []
     if not files_to_use:
+        st.session_state["master_all"] = None
         return None
 
     file_items = []
@@ -514,6 +503,9 @@ def build_master_from_uploads():
 
     perf = build_performance_report(perf_item["df"])
 
+    # store the full unfiltered master for driver lookup
+    st.session_state["master_all"] = perf.copy()
+
     for _, r in perf.iterrows():
         did = r.get("معرّف السائق")
         name = r.get("اسم السائق")
@@ -523,6 +515,7 @@ def build_master_from_uploads():
 
     f = perf.copy()
 
+    # Filters (only for the priority tables)
     if search.strip():
         s = search.strip().lower()
         f = f[
@@ -599,6 +592,42 @@ def page_ops(f: pd.DataFrame | None):
     st.subheader("🚨 الأولوية")
     attention_cols = ["ترتيب المتابعة", "معرّف السائق", "اسم السائق", "معدل توصيل", "معدل الغاء", "طلبات", "المهام المرفوضة"]
     st.dataframe(style_attention_table(f[attention_cols].head(60)), use_container_width=True, hide_index=True)
+
+    # ✅ DRIVER LOOKUP RESTORED (uses full master, not filtered)
+    st.divider()
+    st.subheader("🔎 بحث عن سائق")
+
+    master_all = st.session_state.get("master_all", None)
+    if master_all is None or len(master_all) == 0:
+        st.info("لا توجد بيانات كافية لعرض بحث عن سائق.")
+        return
+
+    # build dropdown options: "Name (ID)"
+    master_all = master_all.copy()
+    master_all["معرّف السائق"] = pd.to_numeric(master_all["معرّف السائق"], errors="coerce").astype("Int64")
+    master_all["اسم السائق"] = master_all["اسم السائق"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+
+    master_all = master_all.dropna(subset=["معرّف السائق"]).drop_duplicates(subset=["معرّف السائق"], keep="first")
+
+    master_all["اختيار"] = master_all["اسم السائق"] + " (" + master_all["معرّف السائق"].astype(str) + ")"
+    options = master_all["اختيار"].tolist()
+
+    selected = st.selectbox("اختر السائق", ["(اختر)"] + options)
+
+    if selected != "(اختر)":
+        did = int(selected.split("(")[-1].replace(")", "").strip())
+        row = master_all[master_all["معرّف السائق"] == did].head(1).iloc[0]
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("معدل توصيل %", f"{float(row['معدل توصيل']):.2%}")
+        c2.metric("طلبات", f"{int(float(row['طلبات'])):,}")
+        c3.metric("معدل الغاء %", f"{float(row['معدل الغاء']):.2%}")
+        wd = row.get("اعدد ايام العمل")
+        c4.metric("اعدد ايام العمل", "—" if pd.isna(wd) else f"{int(float(wd)):,}")
+        fr = row.get("FR")
+        c5.metric("FR", "—" if pd.isna(fr) else f"{int(float(fr)):,}")
+        vda = row.get("VDA")
+        c6.metric("VDA", "—" if pd.isna(vda) else f"{int(float(vda)):,}")
 
     st.divider()
     st.subheader("📋 الجدول النهائي (كامل البيانات)")
